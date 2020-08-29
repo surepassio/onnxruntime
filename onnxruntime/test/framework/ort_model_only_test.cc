@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+#include "core/framework/tensorprotoutils.h"
 #include "core/graph/onnx_protobuf.h"
 #include "core/session/inference_session.h"
 #include "core/graph/model.h"
@@ -28,6 +29,60 @@ class InferenceSessionGetGraphWrapper : public InferenceSession {
 };
 
 namespace test {
+
+// Same Tensor from ONNX and ORT format will have different binary representation, need to compare value by value
+void CompareTensors(const TensorProto& left, const TensorProto& right) {
+  ASSERT_EQ(left.name(), right.name());
+  ASSERT_TRUE(std::equal(left.dims().cbegin(), left.dims().cend(), right.dims().cbegin()));
+  ASSERT_EQ(left.data_type(), right.data_type());
+  ASSERT_EQ(left.doc_string(), right.doc_string());
+  if (left.data_type() == TensorProto_DataType_STRING) {
+    ASSERT_TRUE(std::equal(left.string_data().cbegin(), left.string_data().cend(), right.string_data().cbegin()));
+  } else {
+    std::unique_ptr<uint8_t[]> unpacked_tensor_l;
+    std::unique_ptr<uint8_t[]> unpacked_tensor_r;
+    size_t tensor_byte_size_l;
+    size_t tensor_byte_size_r;
+    ASSERT_STATUS_OK(onnxruntime::utils::UnpackInitializerData(left, unpacked_tensor_l, tensor_byte_size_l));
+    ASSERT_STATUS_OK(onnxruntime::utils::UnpackInitializerData(right, unpacked_tensor_r, tensor_byte_size_r));
+    ASSERT_EQ(tensor_byte_size_l, tensor_byte_size_r);
+    ASSERT_EQ(memcmp(unpacked_tensor_l.get(), unpacked_tensor_r.get(), tensor_byte_size_l), 0);
+  }
+}
+
+void CompareValueInfos(const ValueInfoProto& left, const ValueInfoProto& right) {
+  ASSERT_EQ(left.name(), right.name());
+  ASSERT_EQ(left.doc_string(), right.doc_string());
+
+  std::string left_data;
+  std::string right_data;
+
+  const auto& left_type_proto = left.type();
+  const auto& right_type_proto = right.type();
+
+  ASSERT_EQ(left_type_proto.denotation(), right_type_proto.denotation());
+  ASSERT_TRUE(left_type_proto.has_tensor_type());
+  ASSERT_TRUE(right_type_proto.has_tensor_type());
+
+  const auto& left_tensor_type = left_type_proto.tensor_type();
+  const auto& right_tensor_type = right_type_proto.tensor_type();
+
+  ASSERT_EQ(left_tensor_type.elem_type(), right_tensor_type.elem_type());
+
+  const auto& left_shape = left_tensor_type.shape();
+  const auto& right_shape = right_tensor_type.shape();
+
+  ASSERT_EQ(left_shape.dim_size(), right_shape.dim_size());
+  for (int i = 0; i < left_shape.dim_size(); i++) {
+    const auto& left_dim = left_shape.dim(i);
+    const auto& right_dim = right_shape.dim(i);
+    ASSERT_EQ(left_dim.has_dim_value(), right_dim.has_dim_value());
+    ASSERT_EQ(left_dim.dim_value(), right_dim.dim_value());
+    ASSERT_EQ(left_dim.has_dim_param(), right_dim.has_dim_param());
+    ASSERT_EQ(left_dim.dim_param(), right_dim.dim_param());
+  }
+}
+
 #if !defined(ORT_MINIMAL_BUILD)
 TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
   const auto output_file = ORT_TSTR("ort_github_issue_4031.onnx.ort");
@@ -81,11 +136,7 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
 
     const TensorProto& left = *pair.second;
     const TensorProto& right = *iter->second;
-    std::string left_data;
-    std::string right_data;
-    left.SerializeToString(&left_data);
-    right.SerializeToString(&right_data);
-    ASSERT_EQ(left_data, right_data);
+    CompareTensors(left, right);
   }
 
   // check all node args are fine
@@ -94,12 +145,9 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
     const auto* right = graph2.GetNodeArg(input->Name());
     ASSERT_TRUE(right != nullptr);
 
-    // serialize as strings so it's easy to compare all values at once
-    std::string left_data;
-    std::string right_data;
-    left.ToProto().SerializeToString(&left_data);
-    right->ToProto().SerializeToString(&right_data);
-    ASSERT_EQ(left_data, right_data);
+    const auto& left_proto = left.ToProto();
+    const auto& right_proto = right->ToProto();
+    CompareValueInfos(left_proto, right_proto);
   }
 
   // check results match

@@ -417,6 +417,9 @@ common::Status InferenceSession::RegisterCustomRegistry(std::shared_ptr<CustomRe
 }
 
 common::Status InferenceSession::SaveToOrtFormat(const std::basic_string<ORTCHAR_T>& filepath) const {
+  ORT_RETURN_IF_NOT(FLATBUFFERS_LITTLEENDIAN, "ort format only supports little-edian machines");
+
+  // TODO, figure out a optimal buffer size than default 1024
   flatbuffers::FlatBufferBuilder builder(1024);
   auto ort_version = builder.CreateString(ORT_VERSION);
   flatbuffers::Offset<fbs::Model> model;
@@ -851,11 +854,7 @@ Status InferenceSession::LoadOrtModel(const void* model_data, int model_data_len
 }
 
 Status InferenceSession::LoadOrtModel(std::function<Status(gsl::span<const uint8_t>&)> get_serialized_bytes) {
-  /* TODO: Convert to flatbuffers
-  auto ref = flexbuffers::GetRoot(flexbuffer_serialized_bytes.data(), flexbuffer_serialized_bytes.size());
-  std::cout << ref.ToString();
-  auto root = ref.AsMap();
-  */
+  ORT_RETURN_IF_NOT(FLATBUFFERS_LITTLEENDIAN, "ort format only supports little-edian machines");
   gsl::span<const uint8_t> bytes;
   ORT_RETURN_IF_ERROR(get_serialized_bytes(bytes));
 

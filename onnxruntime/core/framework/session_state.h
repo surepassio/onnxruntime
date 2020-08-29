@@ -257,6 +257,9 @@ class SessionState {
                          flatbuffers::Offset<onnxruntime::experimental::fbs::SessionState>& fbs_session_state) const;
 #endif
 
+  Status LoadFromOrtFormat(const onnxruntime::experimental::fbs::SessionState& fbs_session_state,
+                           const KernelRegistryManager& kernel_registry_manager);
+
   Status FinalizeSessionState(const std::basic_string<PATH_CHAR_TYPE>& graph_loc,
                               KernelRegistryManager& kernel_registry_manager,
                               const SessionOptions& session_options = {},

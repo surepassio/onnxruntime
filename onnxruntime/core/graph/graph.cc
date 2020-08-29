@@ -598,8 +598,15 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
       std::unique_ptr<Graph> sub_graph;
       ORT_RETURN_IF_ERROR(
           experimental::utils::LoadAttributeOrtFormat(*fbs_attr, attr_proto, sub_graph, *graph_, *this, logger));
-      attr_to_subgraph_map_.emplace(attr_proto.name(), gsl::not_null<Graph*>(sub_graph.get()));
-      subgraphs_.push_back(std::move(sub_graph));
+
+      // If we have a sub graph in this attributes, it will be loaded into sub_graph ptr
+      // while the attribute proto contains the sub graph will have the empty g() field
+      if (attr_proto.type() == AttributeProto_AttributeType_GRAPH) {
+        ORT_RETURN_IF_NOT(sub_graph, "sub_graph should be loaded");
+        attr_to_subgraph_map_.emplace(attr_proto.name(), gsl::not_null<Graph*>(sub_graph.get()));
+        subgraphs_.push_back(std::move(sub_graph));
+      }
+
       AddAttribute(attr_proto.name(), attr_proto);
     }
   }
@@ -3392,6 +3399,9 @@ Graph::Graph(const Model& owning_model,
              const logging::Logger& logger)
     : owning_model_(owning_model),
       graph_proto_(&deserialized_proto_data_),
+#if !defined(ORT_MODEL_FORMAT_ONLY)
+      schema_registry_(std::make_shared<SchemaRegistryManager>()),
+#endif
       domain_to_version_(domain_to_version),
       parent_graph_(parent_graph),
       parent_node_(parent_node),
@@ -3426,7 +3436,7 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   }
 
   // Nodes
-  nodes_.reserve(fbs_graph.max_node_index());
+  nodes_.resize(fbs_graph.max_node_index());
   auto* fbs_nodes = fbs_graph.nodes();
   if (fbs_nodes != nullptr) {
     for (const auto* fbs_node : *fbs_nodes) {
@@ -3450,7 +3460,7 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   auto add_node_args = [&](const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* fbs_node_args,
                            std::vector<const NodeArg*>& node_args) -> Status {
     if (fbs_node_args != nullptr) {
-      graph_outputs_.reserve(fbs_node_args->size());
+      node_args.reserve(fbs_node_args->size());
       for (const auto* fbs_node_arg_name : *fbs_node_args) {
         ORT_RETURN_IF_NOT(nullptr != fbs_node_arg_name, "fbs_node_arg_name cannot be null");
         gsl::not_null<NodeArg*> node_arg = GetNodeArg(fbs_node_arg_name->str());

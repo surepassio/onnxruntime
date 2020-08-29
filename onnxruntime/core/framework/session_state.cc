@@ -634,34 +634,28 @@ const std::unordered_set<NodeIndex>* SessionState::GetToBeExecutedNodes(
   return (it != to_be_executed_nodes_.end()) ? &it->second : nullptr;
 }
 
-static Status GetSubGraphSessionStatesOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                                                const std::unordered_map<onnxruntime::NodeIndex, std::unordered_map<std::string, std::unique_ptr<SessionState>>>& subgraph_session_states,
-                                                std::vector<flatbuffers::Offset<fbs::SubGraphSessionState>>& fbs_subgraph_session_states) {
+static std::string GetSubGraphId(const NodeIndex node_idx, const std::string& attr_name) {
+  return std::to_string(node_idx) + "_" + attr_name;
+}
+
+static Status GetSubGraphSessionStatesOrtFormat(
+    flatbuffers::FlatBufferBuilder& builder,
+    const std::unordered_map<NodeIndex, std::unordered_map<std::string, std::unique_ptr<SessionState>>>& subgraph_session_states,
+    std::vector<flatbuffers::Offset<fbs::SubGraphSessionState>>& fbs_subgraph_session_states) {
   fbs_subgraph_session_states.clear();
-  if (!subgraph_session_states.empty()) {
-    std::vector<NodeIndex> sorted_node_indexes;
-    sorted_node_indexes.reserve(sorted_node_indexes.size());
-    std::transform(subgraph_session_states.cbegin(), subgraph_session_states.cend(),
-                   std::back_inserter(sorted_node_indexes),
-                   [](auto const& pair) {
-                     return pair.first;
-                   });
-    std::sort(sorted_node_indexes.begin(), sorted_node_indexes.end());
-    for (const auto& idx : sorted_node_indexes) {
-      const auto& session_states = subgraph_session_states.at(idx);
-      for (const auto& name_to_subgraph_session_state : session_states) {
-        const std::string& attr_name = name_to_subgraph_session_state.first;
-        SessionState& subgraph_session_state = *name_to_subgraph_session_state.second;
+  for (const auto& pair : subgraph_session_states) {
+    const auto node_idx = pair.first;
+    const auto& session_states = pair.second;
+    for (const auto& name_to_subgraph_session_state : session_states) {
+      const std::string& attr_name = name_to_subgraph_session_state.first;
+      SessionState& subgraph_session_state = *name_to_subgraph_session_state.second;
+      auto graph_id = builder.CreateString(GetSubGraphId(node_idx, attr_name));
+      flatbuffers::Offset<fbs::SessionState> session_state;
+      ORT_RETURN_IF_ERROR(
+          subgraph_session_state.SaveToOrtFormat(builder, session_state));
 
-        auto graph_id = builder.CreateString(std::to_string(idx) + "_" + attr_name);
-
-        flatbuffers::Offset<fbs::SessionState> session_state;
-        ORT_RETURN_IF_ERROR(
-            subgraph_session_state.SaveToOrtFormat(builder, session_state));
-
-        fbs_subgraph_session_states.push_back(
-            fbs::CreateSubGraphSessionState(builder, graph_id, session_state));
-      }
+      fbs_subgraph_session_states.push_back(
+          fbs::CreateSubGraphSessionState(builder, graph_id, session_state));
     }
   }
   return Status::OK();
@@ -726,6 +720,55 @@ Status SessionState::CreateSubgraphSessionState() {
   return Status::OK();
 }
 
+Status SessionState::LoadFromOrtFormat(const fbs::SessionState& fbs_session_state,
+                                       const KernelRegistryManager& kernel_registry_manager) {
+  const auto* fbs_kcis = fbs_session_state.kernels();
+  ORT_RETURN_IF_NOT(nullptr != fbs_kcis, "fbs_kcis cannot be null");
+  auto* node_indices = fbs_kcis->node_indices();
+  auto* kernel_def_hashes = fbs_kcis->kernel_def_hashes();
+  ORT_RETURN_IF_NOT(nullptr != node_indices, "node_indices cannot be null");
+  ORT_RETURN_IF_NOT(nullptr != kernel_def_hashes, "kernel_def_hashes cannot be null");
+  ORT_RETURN_IF_NOT(node_indices->size() == kernel_def_hashes->size(),
+                    "node_indices and kernel_def_hashes should have same size");
+
+  for (flatbuffers::uoffset_t i = 0; i < node_indices->size(); i++) {
+    auto node_idx = node_indices->Get(i);
+    auto kernal_hash = kernel_def_hashes->Get(i);
+
+    const Node* node = graph_.GetNode(node_idx);
+    ORT_RETURN_IF_NOT(node != nullptr, "Can't find node with index ", node_idx, " in graph.");
+
+    const KernelCreateInfo* kci = nullptr;
+    ORT_RETURN_IF_ERROR(kernel_registry_manager.SearchKernelRegistry(*node, kernal_hash, &kci));
+    kernel_create_info_map_.emplace(node_idx, gsl::not_null<const KernelCreateInfo*>(kci));
+  }
+
+  if (!subgraph_session_states_.empty()) {
+    auto* fbs_sub_graph_session_states = fbs_session_state.sub_graph_session_states();
+    ORT_RETURN_IF_NOT(nullptr != fbs_sub_graph_session_states, "fbs_sub_graph_session_states cannot be null");
+
+    for (const auto& pair : subgraph_session_states_) {
+      const auto node_idx = pair.first;
+      const auto& session_states = pair.second;
+      for (const auto& name_to_subgraph_session_state : session_states) {
+        const std::string& attr_name = name_to_subgraph_session_state.first;
+        SessionState& subgraph_session_state = *name_to_subgraph_session_state.second;
+
+        // Use the graphid as the key to search the for the fbs::SubGraphSessionState
+        const auto key = GetSubGraphId(node_idx, attr_name);
+        auto* fbs_sub_graph_ss = fbs_sub_graph_session_states->LookupByKey(key.c_str());
+        ORT_RETURN_IF_NOT(nullptr != fbs_sub_graph_ss, "fbs_sub_graph_ss cannot be found");
+
+        auto* fbs_sub_session_state = fbs_sub_graph_ss->session_state();
+        ORT_RETURN_IF_NOT(nullptr != fbs_sub_session_state, "fbs_sub_session_state cannot be null");
+        subgraph_session_state.LoadFromOrtFormat(*fbs_sub_session_state, kernel_registry_manager);
+      }
+    }
+  }
+
+  return Status::OK();
+}
+
 Status SessionState::FinalizeSessionState(const std::basic_string<PATH_CHAR_TYPE>& graph_location,
                                           KernelRegistryManager& kernel_registry_manager,
                                           const SessionOptions& session_options,
@@ -737,12 +780,10 @@ Status SessionState::FinalizeSessionState(const std::basic_string<PATH_CHAR_TYPE
   ORT_RETURN_IF_ERROR(CreateSubgraphSessionState());
 
   if (serialized_session_state) {
-    ORT_NOT_IMPLEMENTED("TODO: Deserialize");
+    ORT_RETURN_IF_ERROR(LoadFromOrtFormat(*serialized_session_state, kernel_registry_manager));
   } else {
 #if !defined(ORT_MINIMAL_BUILD)
     ORT_RETURN_IF_ERROR(PopulateKernelCreateInfo(kernel_registry_manager));
-    return FinalizeSessionStateImpl(graph_location, kernel_registry_manager, nullptr, session_options,
-                                    remove_initializers);
 #else
     ORT_UNUSED_PARAMETER(graph_location);
     ORT_UNUSED_PARAMETER(kernel_registry_manager);
@@ -752,6 +793,9 @@ Status SessionState::FinalizeSessionState(const std::basic_string<PATH_CHAR_TYPE
                   "Serialized session state must be provided from an ORT format model in this build.");
 #endif
   }
+
+  return FinalizeSessionStateImpl(graph_location, kernel_registry_manager, nullptr, session_options,
+                                  remove_initializers);
 }
 
 Status SessionState::FinalizeSessionStateImpl(const std::basic_string<PATH_CHAR_TYPE>& graph_location,
