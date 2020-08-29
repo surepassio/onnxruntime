@@ -16,11 +16,13 @@ static flatbuffers::Offset<fbs::Dimension> GetTensorDimensionOrtFormat(
     flatbuffers::FlatBufferBuilder& builder,
     const TensorShapeProto_Dimension& tensor_shape_dim) {
   auto denotation = builder.CreateString(tensor_shape_dim.denotation());
-  flatbuffers::Offset<fbs::DimensionValue> dim_val = 0;
+  flatbuffers::Offset<fbs::DimensionValue> dim_val;
   if (tensor_shape_dim.has_dim_param()) {
     dim_val = fbs::CreateDimensionValueDirect(builder, fbs::DimensionValueType_PARAM, 0, tensor_shape_dim.dim_param().c_str());
   } else if (tensor_shape_dim.has_dim_value()) {
     dim_val = fbs::CreateDimensionValueDirect(builder, fbs::DimensionValueType_VALUE, tensor_shape_dim.dim_value());
+  } else {
+    dim_val = fbs::CreateDimensionValueDirect(builder);
   }
 
   return fbs::CreateDimension(builder, dim_val, denotation);
