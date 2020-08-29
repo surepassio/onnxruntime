@@ -524,7 +524,7 @@ common::Status Model::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   auto op_set_ids = builder.CreateVector(op_set_ids_vec);
 
   flatbuffers::Offset<fbs::Graph> fbs_graph;
-  graph_->SaveToOrtFormat(builder, fbs_graph);
+  ORT_RETURN_IF_ERROR(graph_->SaveToOrtFormat(builder, fbs_graph));
 
   fbs::ModelBuilder mb(builder);
   mb.add_ir_version(model_proto_.ir_version());

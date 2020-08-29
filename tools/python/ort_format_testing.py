@@ -71,7 +71,7 @@ def main():
 
     test_models = [
         r'D:\src\github\ORT test models\20190729\opset10\yolov3\yolov3.onnx',
-        r'D:\src\github\ORT test models\20190729\opset8\tf_mobilenet_v2_1.4_224\model.onnx',
+        r'D:\src\github\ORT test models\20190729\opset10\tf_mobilenet_v2_1.4_224\model.onnx',
         r'D:\src\github\ORT test models\20190729\opset10\mlperf_ssd_mobilenet_300\ssd_mobilenet_v1_coco_2018_01_28.onnx',  # noqa
     ]
 

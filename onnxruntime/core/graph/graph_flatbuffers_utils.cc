@@ -44,10 +44,14 @@ static Status GetTensorShapeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
 static Status GetTensorTypeAndShapeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
                                              const TypeProto_Tensor& tensor_type_proto,
                                              flatbuffers::Offset<fbs::TensorTypeAndShape>& fbs_tensor_type) {
-  flatbuffers::Offset<fbs::Shape> shape;
-  ORT_RETURN_IF_ERROR(GetTensorShapeOrtFormat(builder, tensor_type_proto.shape(), shape));
+  flatbuffers::Offset<fbs::Shape> shape = 0;
+  if (tensor_type_proto.has_shape()) {
+    ORT_RETURN_IF_ERROR(GetTensorShapeOrtFormat(builder, tensor_type_proto.shape(), shape));
+  }
+
   fbs_tensor_type = fbs::CreateTensorTypeAndShape(
       builder, static_cast<fbs::TensorDataType>(tensor_type_proto.elem_type()), shape);
+
   return Status::OK();
 }
 
@@ -58,7 +62,6 @@ static Status GetTypeInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   auto value_type = fbs::TypeInfoValue_tensor_type;
   flatbuffers::Offset<void> value;
   if (type_proto.has_tensor_type()) {
-    value_type = fbs::TypeInfoValue_tensor_type;
     flatbuffers::Offset<fbs::TensorTypeAndShape> tensor_type;
     ORT_RETURN_IF_ERROR(
         GetTensorTypeAndShapeOrtFormat(builder, type_proto.tensor_type(), tensor_type));

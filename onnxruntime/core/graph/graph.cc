@@ -595,16 +595,16 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
     for (const auto* fbs_attr : *fbs_attributes) {
       ORT_RETURN_IF_NOT(nullptr != fbs_attr, "fbs_attr cannot be null");
       AttributeProto attr_proto;
-      std::unique_ptr<Graph> sub_graph;
+      std::unique_ptr<Graph> subgraph;
       ORT_RETURN_IF_ERROR(
-          experimental::utils::LoadAttributeOrtFormat(*fbs_attr, attr_proto, sub_graph, *graph_, *this, logger));
+          experimental::utils::LoadAttributeOrtFormat(*fbs_attr, attr_proto, subgraph, *graph_, *this, logger));
 
-      // If we have a sub graph in this attributes, it will be loaded into sub_graph ptr
+      // If we have a sub graph in this attributes, it will be loaded into subgraph ptr
       // while the attribute proto contains the sub graph will have the empty g() field
       if (attr_proto.type() == AttributeProto_AttributeType_GRAPH) {
-        ORT_RETURN_IF_NOT(sub_graph, "sub_graph should be loaded");
-        attr_to_subgraph_map_.emplace(attr_proto.name(), gsl::not_null<Graph*>(sub_graph.get()));
-        subgraphs_.push_back(std::move(sub_graph));
+        ORT_RETURN_IF_NOT(subgraph, "Serialization error. Graph attribute was serialized without Graph instance");
+        attr_to_subgraph_map_.emplace(attr_proto.name(), gsl::not_null<Graph*>(subgraph.get()));
+        subgraphs_.push_back(std::move(subgraph));
       }
 
       AddAttribute(attr_proto.name(), attr_proto);
@@ -3369,7 +3369,7 @@ Status Graph::LoadFromOrtFormat(
   // can't use make_unique as we're calling a private ctor
   graph.reset(new Graph(owning_model, domain_to_version, nullptr, nullptr, logger));
 
-  auto status = graph->LoadFromOrtFormat(fbs_graph);
+  ORT_RETURN_IF_ERROR(graph->LoadFromOrtFormat(fbs_graph));
 
 #if !defined(ORT_MINIMAL_BUILD)
   // in a full build we run Resolve to fully populate ResolveContext
@@ -3379,7 +3379,7 @@ Status Graph::LoadFromOrtFormat(
   // probably nothing required here. validate with model that has nested subgraphs.
 #endif
 
-  return status;
+  return Status::OK();
 }
 
 Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Graph& fbs_graph,

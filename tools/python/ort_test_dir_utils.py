@@ -188,7 +188,7 @@ def run_test_dir(model_or_dir):
         model_path = os.path.abspath(model_or_dir)
         model_dir = os.path.dirname(model_path)
 
-    print(f'Running tests in {model_dir}')
+    print(f'Running tests in {model_dir} for {model_path}')
 
     test_dirs = [d for d in glob.glob(os.path.join(model_dir, 'test*')) if os.path.isdir(d)]
     if not test_dirs:
