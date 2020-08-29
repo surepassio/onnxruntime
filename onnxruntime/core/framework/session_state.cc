@@ -600,6 +600,10 @@ const NodeIndexInfo& SessionState::GetNodeIndexInfo() const {
   return *node_index_info_;
 }
 
+static std::string GetSubGraphId(const NodeIndex node_idx, const std::string& attr_name) {
+  return std::to_string(node_idx) + "_" + attr_name;
+}
+
 #if !defined(ORT_MINIMAL_BUILD)
 void SessionState::UpdateToBeExecutedNodes(const std::vector<int>& fetch_mlvalue_idxs) {
   std::vector<int> sorted_idxs = fetch_mlvalue_idxs;
@@ -632,10 +636,6 @@ const std::unordered_set<NodeIndex>* SessionState::GetToBeExecutedNodes(
   std::sort(sorted_idxs.begin(), sorted_idxs.end());
   auto it = to_be_executed_nodes_.find(sorted_idxs);
   return (it != to_be_executed_nodes_.end()) ? &it->second : nullptr;
-}
-
-static std::string GetSubGraphId(const NodeIndex node_idx, const std::string& attr_name) {
-  return std::to_string(node_idx) + "_" + attr_name;
 }
 
 static Status GetSubGraphSessionStatesOrtFormat(

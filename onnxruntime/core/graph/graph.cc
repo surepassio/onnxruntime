@@ -514,7 +514,7 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
       graph = it->second;
     }
     ORT_RETURN_IF_ERROR(
-        experimental::utils::GetAttributeOrtFormat(builder, attr_proto, fbs_attr, graph));
+        experimental::utils::SaveAttributeOrtFormat(builder, attr_proto, fbs_attr, graph));
     attributes_vec.push_back(fbs_attr);
   }
   auto attributes = builder.CreateVector(attributes_vec);
@@ -537,7 +537,7 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   return Status::OK();
 }
 
-flatbuffers::Offset<fbs::NodeEdge> Node::GetEdgesOrtFormat(flatbuffers::FlatBufferBuilder& builder) const {
+flatbuffers::Offset<fbs::NodeEdge> Node::SaveEdgesOrtFormat(flatbuffers::FlatBufferBuilder& builder) const {
   auto get_edges = [](const EdgeSet& edge_set) {
     std::vector<fbs::EdgeEnd> edges;
     edges.reserve(edge_set.size());
@@ -552,6 +552,8 @@ flatbuffers::Offset<fbs::NodeEdge> Node::GetEdgesOrtFormat(flatbuffers::FlatBuff
   const auto output_edges = get_edges(relationships_.output_edges);
   return fbs::CreateNodeEdgeDirect(builder, gsl::narrow<uint32_t>(index_), &input_edges, &output_edges);
 }
+
+#endif  // !defined(ORT_MINIMAL_BUILD)
 
 Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_node, Graph& graph,
                                const logging::Logger& logger, std::unique_ptr<Node>& node) {
@@ -647,6 +649,7 @@ Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEd
   return Status::OK();
 }
 
+#if !defined(ORT_MINIMAL_BUILD)
 void Node::Init(const std::string& name,
                 const std::string& op_type,
                 const std::string& description,
@@ -2697,7 +2700,7 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   for (const auto& pair : name_to_initial_tensor_) {
     flatbuffers::Offset<fbs::Tensor> fbs_tensor;
     ORT_RETURN_IF_ERROR(
-        experimental::utils::GetInitializerOrtFormat(builder, *pair.second, fbs_tensor));
+        experimental::utils::SaveInitializerOrtFormat(builder, *pair.second, fbs_tensor));
     initializers_data.push_back(fbs_tensor);
   }
   auto initializers = builder.CreateVector(initializers_data);
@@ -2707,7 +2710,7 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   for (const auto& pair : node_args_) {
     flatbuffers::Offset<fbs::ValueInfo> fbs_val_info;
     ORT_RETURN_IF_ERROR(
-        experimental::utils::GetValueInfoOrtFormat(builder, pair.second->ToProto(), fbs_val_info));
+        experimental::utils::SaveValueInfoOrtFormat(builder, pair.second->ToProto(), fbs_val_info));
     node_args_data.push_back(fbs_val_info);
   }
   auto node_args = builder.CreateVector(node_args_data);
@@ -3399,7 +3402,7 @@ Graph::Graph(const Model& owning_model,
              const logging::Logger& logger)
     : owning_model_(owning_model),
       graph_proto_(&deserialized_proto_data_),
-#if !defined(ORT_MODEL_FORMAT_ONLY)
+#if !defined(ORT_MINIMAL_BUILD)
       schema_registry_(std::make_shared<SchemaRegistryManager>()),
 #endif
       domain_to_version_(domain_to_version),

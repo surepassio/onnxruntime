@@ -12,6 +12,7 @@ namespace onnxruntime {
 namespace experimental {
 namespace utils {
 
+#if !defined(ORT_MINIMAL_BUILD)
 static flatbuffers::Offset<fbs::Dimension> GetTensorDimensionOrtFormat(
     flatbuffers::FlatBufferBuilder& builder,
     const TensorShapeProto_Dimension& tensor_shape_dim) {
@@ -78,9 +79,9 @@ static Status GetTypeInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   return Status::OK();
 }
 
-Status GetValueInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                             const ValueInfoProto& value_info_proto,
-                             flatbuffers::Offset<fbs::ValueInfo>& fbs_value_info) {
+Status SaveValueInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
+                              const ValueInfoProto& value_info_proto,
+                              flatbuffers::Offset<fbs::ValueInfo>& fbs_value_info) {
   auto name = builder.CreateString(value_info_proto.name());
   auto doc_string = builder.CreateString(value_info_proto.doc_string());
   flatbuffers::Offset<fbs::TypeInfo> type_info;
@@ -99,9 +100,9 @@ Status GetValueInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   return Status::OK();
 }
 
-Status GetInitializerOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                               const TensorProto& initializer,
-                               flatbuffers::Offset<fbs::Tensor>& fbs_tensor) {
+Status SaveInitializerOrtFormat(flatbuffers::FlatBufferBuilder& builder,
+                                const TensorProto& initializer,
+                                flatbuffers::Offset<fbs::Tensor>& fbs_tensor) {
   auto name = builder.CreateString(initializer.name());
   auto doc_string = builder.CreateString(initializer.doc_string());
   std::vector<int64_t> dims_data(initializer.dims().size());
@@ -150,10 +151,10 @@ Status GetInitializerOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   std::vector<TYPE> NAME(SRC_DATA.size()); \
   std::copy(SRC_DATA.cbegin(), SRC_DATA.cend(), NAME.begin());
 
-Status GetAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                             const AttributeProto& attr_proto,
-                             flatbuffers::Offset<fbs::Attribute>& fbs_attr,
-                             const onnxruntime::Graph* graph) {
+Status SaveAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
+                              const AttributeProto& attr_proto,
+                              flatbuffers::Offset<fbs::Attribute>& fbs_attr,
+                              const onnxruntime::Graph* graph) {
   auto name = builder.CreateString(attr_proto.name());
   auto doc_string = builder.CreateString(attr_proto.doc_string());
   auto type = static_cast<fbs::AttributeType>(attr_proto.type());
@@ -171,7 +172,7 @@ Status GetAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
     case fbs::AttributeType_TENSOR: {
       flatbuffers::Offset<fbs::Tensor> fbs_tensor;
       ORT_RETURN_IF_ERROR(
-          experimental::utils::GetInitializerOrtFormat(builder, attr_proto.t(), fbs_tensor));
+          experimental::utils::SaveInitializerOrtFormat(builder, attr_proto.t(), fbs_tensor));
       GET_FBS_ATTR(builder, type, t, fbs_tensor);
     } break;
     case fbs::AttributeType_GRAPH: {
@@ -201,7 +202,7 @@ Status GetAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
       for (const auto& tensor : attr_proto.tensors()) {
         flatbuffers::Offset<fbs::Tensor> fbs_tensor;
         ORT_RETURN_IF_ERROR(
-            experimental::utils::GetInitializerOrtFormat(builder, tensor, fbs_tensor));
+            experimental::utils::SaveInitializerOrtFormat(builder, tensor, fbs_tensor));
         fbs_tensors_vec.push_back(fbs_tensor);
       }
       auto tensors = builder.CreateVector(fbs_tensors_vec);
@@ -213,6 +214,8 @@ Status GetAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
 
   return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "GetAttributeOrtFormat - Unsupported type: ", type);
 }
+
+#endif
 
 #undef GET_FBS_ATTR
 #undef GET_DATA_VEC

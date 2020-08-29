@@ -7,28 +7,27 @@
 namespace onnxruntime {
 namespace experimental {
 namespace utils {
-onnxruntime::common::Status GetValueInfoOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                                                  const ONNX_NAMESPACE::ValueInfoProto& value_info_proto,
-                                                  flatbuffers::Offset<fbs::ValueInfo>& fbs_value_info) ORT_MUST_USE_RESULT;
+onnxruntime::common::Status SaveValueInfoOrtFormat(
+    flatbuffers::FlatBufferBuilder& builder, const ONNX_NAMESPACE::ValueInfoProto& value_info_proto,
+    flatbuffers::Offset<fbs::ValueInfo>& fbs_value_info) ORT_MUST_USE_RESULT;
 
-onnxruntime::common::Status GetInitializerOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                                                    const ONNX_NAMESPACE::TensorProto& initializer,
-                                                    flatbuffers::Offset<fbs::Tensor>& fbs_tensor) ORT_MUST_USE_RESULT;
+onnxruntime::common::Status SaveInitializerOrtFormat(
+    flatbuffers::FlatBufferBuilder& builder, const ONNX_NAMESPACE::TensorProto& initializer,
+    flatbuffers::Offset<fbs::Tensor>& fbs_tensor) ORT_MUST_USE_RESULT;
 
 // Convert a given AttributeProto into fbs::Attribute
 // Note, we current do not support graphs, and sparse_tensor(s)
 //       If the attribute type is a graph, we need to use the supplied graph,
 //       instead of the GraphProto in attr_proto
-onnxruntime::common::Status GetAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
-                                                  const ONNX_NAMESPACE::AttributeProto& attr_proto,
-                                                  flatbuffers::Offset<fbs::Attribute>& fbs_attr,
-                                                  const onnxruntime::Graph* graph) ORT_MUST_USE_RESULT;
+onnxruntime::common::Status SaveAttributeOrtFormat(
+    flatbuffers::FlatBufferBuilder& builder, const ONNX_NAMESPACE::AttributeProto& attr_proto,
+    flatbuffers::Offset<fbs::Attribute>& fbs_attr, const onnxruntime::Graph* graph) ORT_MUST_USE_RESULT;
 
-onnxruntime::common::Status LoadInitializerOrtFormat(const fbs::Tensor& fbs_tensor,
-                                                     ONNX_NAMESPACE::TensorProto& initializer) ORT_MUST_USE_RESULT;
+onnxruntime::common::Status LoadInitializerOrtFormat(
+    const fbs::Tensor& fbs_tensor, ONNX_NAMESPACE::TensorProto& initializer) ORT_MUST_USE_RESULT;
 
-onnxruntime::common::Status LoadValueInfoOrtFormat(const fbs::ValueInfo& fbs_value_info,
-                                                   ONNX_NAMESPACE::ValueInfoProto& value_info_proto) ORT_MUST_USE_RESULT;
+onnxruntime::common::Status LoadValueInfoOrtFormat(
+    const fbs::ValueInfo& fbs_value_info, ONNX_NAMESPACE::ValueInfoProto& value_info_proto) ORT_MUST_USE_RESULT;
 
 // Load a give fbs::Attribute into AttributeProto
 // Note, If the attribute type is a graph, we will leave an empty graph in attr_proto,

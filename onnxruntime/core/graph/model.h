@@ -214,11 +214,11 @@ class Model {
   common::Status SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
                                  flatbuffers::Offset<onnxruntime::experimental::fbs::Model>& model) const;
 
+#endif  // !defined(ORT_MINIMAL_BUILD)
+
   static common::Status LoadFromOrtFormat(const onnxruntime::experimental::fbs::Model& fbs_model,
                                           const logging::Logger& logger,
                                           std::unique_ptr<Model>& model);
-
-#endif  // !defined(ORT_MINIMAL_BUILD)
 
  private:
   Model();

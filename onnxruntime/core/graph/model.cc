@@ -551,14 +551,14 @@ Model::Model() : model_path_{} {
 
 #define SET_MODEL_STR_DATA(SRC, DEST1, DEST2) \
   if (SRC) {                                  \
-    DEST1(SRC->str());                        \
+    model->DEST1(SRC->str());                 \
   }
 
 #else
 
 #define SET_MODEL_STR_DATA(SRC, DEST1, DEST2) \
   if (SRC) {                                  \
-    DEST2 = SRC->str();                       \
+    model->DEST2 = SRC->str();                \
   }
 
 #endif
@@ -572,17 +572,17 @@ common::Status Model::LoadFromOrtFormat(const fbs::Model& fbs_model,
   model->model_proto_.set_model_version(fbs_model.model_version());
   model->model_proto_.set_ir_version(fbs_model.ir_version());
 #else
-  model_version_ = fbs_model.model_version();
-  ir_version_ = fbs_model.ir_version();
+  model->model_version_ = fbs_model.model_version();
+  model->ir_version_ = fbs_model.ir_version();
 #endif
 
   // TODO: Can we always serialize a string so the 'if (SRC)' check isn't needed?
   // Also prefer avoiding the macro and just having a section for full vs. minimal build given we have that
   // already for model and ir versions.
-  SET_MODEL_STR_DATA(fbs_model.producer_name(), model->model_proto_.set_producer_name, producer_name_);
-  SET_MODEL_STR_DATA(fbs_model.producer_version(), model->model_proto_.set_producer_version, producer_version_);
-  SET_MODEL_STR_DATA(fbs_model.domain(), model->model_proto_.set_domain, domain_);
-  SET_MODEL_STR_DATA(fbs_model.doc_string(), model->model_proto_.set_doc_string, doc_string_);
+  SET_MODEL_STR_DATA(fbs_model.producer_name(), model_proto_.set_producer_name, producer_name_);
+  SET_MODEL_STR_DATA(fbs_model.producer_version(), model_proto_.set_producer_version, producer_version_);
+  SET_MODEL_STR_DATA(fbs_model.domain(), model_proto_.set_domain, domain_);
+  SET_MODEL_STR_DATA(fbs_model.doc_string(), model_proto_.set_doc_string, doc_string_);
 
   std::unordered_map<std::string, int> domain_to_version;
   auto fbs_op_set_ids = fbs_model.opset_import();

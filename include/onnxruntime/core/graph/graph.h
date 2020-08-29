@@ -374,15 +374,15 @@ class Node {
                          flatbuffers::Offset<onnxruntime::experimental::fbs::Node>& fbs_node) const;
 
   flatbuffers::Offset<onnxruntime::experimental::fbs::NodeEdge>
-  GetEdgesOrtFormat(flatbuffers::FlatBufferBuilder& builder) const;
+  SaveEdgesOrtFormat(flatbuffers::FlatBufferBuilder& builder) const;
+
+#endif
 
   static Status LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_node, Graph& graph,
                                   const logging::Logger& logger, std::unique_ptr<Node>& node);
 
   Status LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_node, const logging::Logger& logger);
   Status LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEdge& fbs_node_edgs, const Graph& graph);
-
-#endif
 
   /**
   @class Definitions

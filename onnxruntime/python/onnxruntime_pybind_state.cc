@@ -1187,11 +1187,7 @@ including arg name, arg type (contains both type and shape).)pbdoc")
             if (is_arg_file_name) {
               OrtPybindThrowIfError(sess->Load(arg));
             } else {
-              // Copy bytes into a string stream for model loading.
-              // TODO: Can we avoid the copy and just pass in a pointer to the data in the string directly, or
-              // is istringstream adding some value?
-              std::istringstream buffer(arg);
-              OrtPybindThrowIfError(sess->Load(buffer));
+              OrtPybindThrowIfError(sess->Load(arg.data(), arg.size()));
             }
 
             InitializeSession(sess, provider_types, provider_options);
