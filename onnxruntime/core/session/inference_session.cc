@@ -854,43 +854,42 @@ Status InferenceSession::LoadOrtModel(const void* model_data, int model_data_len
 }
 
 Status InferenceSession::LoadOrtModel(std::function<Status(gsl::span<const uint8_t>&)> get_serialized_bytes) {
-  ORT_RETURN_IF_NOT(FLATBUFFERS_LITTLEENDIAN, "ort format only supports little-edian machines");
+  static_assert(FLATBUFFERS_LITTLEENDIAN, "ORT format only supports little-endian machines");
+
+  std::lock_guard<onnxruntime::OrtMutex> l(session_mutex_);
+
+  if (is_model_loaded_) {  // already loaded
+    Status status(common::ONNXRUNTIME, common::MODEL_LOADED, "This session already contains a loaded model.");
+    LOGS(*session_logger_, ERROR) << status.ErrorMessage();
+    return status;
+  }
+
+  if (is_inited_) {
+    Status status(common::ONNXRUNTIME, common::MODEL_LOADED, "This session has already been initialized.");
+    LOGS(*session_logger_, ERROR) << status.ErrorMessage();
+    return status;
+  }
+
   gsl::span<const uint8_t> bytes;
   ORT_RETURN_IF_ERROR(get_serialized_bytes(bytes));
 
   const auto* fbs_session = fbs::GetInferenceSession(bytes.data());
-  ORT_RETURN_IF_NOT(nullptr != fbs_session, "fbs_session cannot be null");
+  ORT_RETURN_IF_NOT(nullptr != fbs_session, "Serialized ORT model is missing InferenceSession");
 
-  {
-    std::lock_guard<onnxruntime::OrtMutex> l(session_mutex_);
+  const auto* fbs_model = fbs_session->model();
+  ORT_RETURN_IF_NOT(nullptr != fbs_model, "Serialized ORT model is missing Model instance");
 
-    if (is_model_loaded_) {  // already loaded
-      Status status(common::ONNXRUNTIME, common::MODEL_LOADED, "This session already contains a loaded model.");
-      LOGS(*session_logger_, ERROR) << status.ErrorMessage();
-      return status;
-    }
-
-    if (is_inited_) {
-      Status status(common::ONNXRUNTIME, common::MODEL_LOADED, "This session has already been initialized.");
-      LOGS(*session_logger_, ERROR) << status.ErrorMessage();
-      return status;
-    }
-
-    const auto* fbs_model = fbs_session->model();
-    ORT_RETURN_IF_NOT(nullptr != fbs_model, "fbs_model cannot be null");
-
-    // need to go from unique_ptr to shared_ptr when moving into model_
-    std::unique_ptr<Model> tmp_model;
-    ORT_RETURN_IF_ERROR(Model::LoadFromOrtFormat(*fbs_model, *session_logger_, tmp_model));
-    ORT_RETURN_IF_ERROR(SaveModelMetadata(*tmp_model));
-    model_ = std::move(tmp_model);
-
-    is_model_loaded_ = true;
-  }
+  // need to go from unique_ptr to shared_ptr when moving into model_
+  std::unique_ptr<Model> tmp_model;
+  ORT_RETURN_IF_ERROR(Model::LoadFromOrtFormat(*fbs_model, *session_logger_, tmp_model));
+  ORT_RETURN_IF_ERROR(SaveModelMetadata(*tmp_model));
+  model_ = std::move(tmp_model);
 
   // Initialize takes the session_mutex_ as well so we need to have released it prior to calling this
   const auto* fbs_sess_state = fbs_session->session_state();
-  ORT_RETURN_IF_NOT(nullptr != fbs_sess_state, "fbs_sess_state cannot be null");
+  ORT_RETURN_IF_NOT(nullptr != fbs_sess_state, "Serialized ORT model is missing SessionState");
+
+  is_model_loaded_ = true;
 
   return Status::OK();
 }

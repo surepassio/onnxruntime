@@ -483,8 +483,8 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   auto GetNodeArgsOrtFormat = [&builder](const std::vector<NodeArg*>& src) {
     std::vector<std::string> node_args(src.size());
     std::transform(src.cbegin(), src.cend(), node_args.begin(),
-                   [](const NodeArg* node) {
-                     return node->Name();
+                   [](const NodeArg* nodearg) {
+                     return nodearg->Name();
                    });
     return builder.CreateVectorOfStrings(node_args);
   };
@@ -567,16 +567,18 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
   }
 
 Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_node, const logging::Logger& logger) {
-  (void)logger;
-
   auto LoadNodeArgsOrtFormat =
       [&](const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* fbs_node_arg_names,
-          std::vector<NodeArg*>& node_args) -> Status {
+          std::vector<NodeArg*>& node_args,
+          bool check_parent_graph = false) -> Status {
     node_args.reserve(fbs_node_arg_names->size());
     if (fbs_node_arg_names) {
       for (const auto& node_arg_name : *fbs_node_arg_names) {
-        ORT_RETURN_IF_NOT(nullptr != node_arg_name, "node_arg_name cannot be null");
-        node_args.push_back(graph_->GetNodeArg(node_arg_name->str()));
+        ORT_RETURN_IF(nullptr == node_arg_name, "node_arg_name cannot be null");
+        auto* node_arg = check_parent_graph ? graph_->GetNodeArgIncludingParentGraphs(node_arg_name->str())
+                                            : graph_->GetNodeArg(node_arg_name->str());
+        ORT_RETURN_IF(nullptr == node_arg, "Could not find NodeArg ", node_arg_name->str());
+        node_args.push_back(node_arg);
       }
     }
     return Status::OK();
@@ -613,11 +615,12 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
     }
   }
 
-  ORT_RETURN_IF_ERROR(LoadNodeArgsOrtFormat(fbs_node.implicit_inputs(), definitions_.implicit_input_defs));
+  ORT_RETURN_IF_ERROR(LoadNodeArgsOrtFormat(fbs_node.implicit_inputs(), definitions_.implicit_input_defs,
+                                            /* check parent graphs */ true));
 
   {  // input_arg_counts
     auto fbs_input_arg_counts = fbs_node.input_arg_counts();
-    ORT_RETURN_IF_NOT(nullptr != fbs_input_arg_counts, "fbs_input_arg_counts cannot be null");
+    ORT_RETURN_IF(nullptr == fbs_input_arg_counts, "fbs_input_arg_counts cannot be null");
     auto& input_arg_count = definitions_.input_arg_count;
     input_arg_count.reserve(fbs_input_arg_counts->size());
     input_arg_count.insert(input_arg_count.begin(), fbs_input_arg_counts->cbegin(), fbs_input_arg_counts->cend());
@@ -628,9 +631,10 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
   return Status::OK();
 }
 
-Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEdge& fbs_node_edgs, const Graph& graph) {
-  ORT_RETURN_IF_NOT(fbs_node_edgs.node_index() != index_,
-                    "input index: ", fbs_node_edgs.node_index(), " does not match this index", index_);
+Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEdge& fbs_node_edges,
+                                    const Graph& graph) {
+  ORT_RETURN_IF_NOT(fbs_node_edges.node_index() == index_,
+                    "input index: ", fbs_node_edges.node_index(), " is not the same as this node's index:", index_);
 
   auto add_edges = [&graph](const flatbuffers::Vector<const onnxruntime::experimental::fbs::EdgeEnd*>* fbs_edges,
                             EdgeSet& edge_set) -> Status {
@@ -643,8 +647,8 @@ Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEd
     return Status::OK();
   };
 
-  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edgs.input_edges(), relationships_.input_edges));
-  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edgs.output_edges(), relationships_.output_edges));
+  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.input_edges(), relationships_.input_edges));
+  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.output_edges(), relationships_.output_edges));
 
   return Status::OK();
 }
@@ -1455,6 +1459,8 @@ Status Graph::BuildConnections(std::unordered_set<std::string>& outer_scope_node
   return Status::OK();
 }
 
+#endif  // !defined(ORT_MINIMAL_BUILD)
+
 NodeArg* Graph::GetNodeArgIncludingParentGraphs(const std::string& node_arg_name) {
   NodeArg* node_arg = GetNodeArg(node_arg_name);
 
@@ -1464,8 +1470,6 @@ NodeArg* Graph::GetNodeArgIncludingParentGraphs(const std::string& node_arg_name
 
   return node_arg;
 }
-
-#endif  // !defined(ORT_MINIMAL_BUILD)
 
 void Graph::ReverseDFSFrom(const std::vector<NodeIndex>& from,
                            const std::function<void(const Node*)>& enter,
@@ -2723,7 +2727,7 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
       flatbuffers::Offset<fbs::Node> fbs_node;
       ORT_RETURN_IF_ERROR(node->SaveToOrtFormat(builder, fbs_node));
       nodes_vec.push_back(fbs_node);
-      node_edges_vec.push_back(node->GetEdgesOrtFormat(builder));
+      node_edges_vec.push_back(node->SaveEdgesOrtFormat(builder));
     }
   }
   auto nodes = builder.CreateVector(nodes_vec);
@@ -3375,8 +3379,10 @@ Status Graph::LoadFromOrtFormat(
   ORT_RETURN_IF_ERROR(graph->LoadFromOrtFormat(fbs_graph));
 
 #if !defined(ORT_MINIMAL_BUILD)
-  // in a full build we run Resolve to fully populate ResolveContext
-  // which will allow optimizers to run or non-ORT EPs to take nodes
+  // in a full build we need to run Resolve to fully populate ResolveContext and Node::op_,
+  // which will allow optimizers to run or non-ORT EPs to take nodes.
+  // TODO: We could decide that an ORT model is load only even in a full build,
+  // and in InferenceSession::Initialize skip partitioning and running optimizers.
   ORT_RETURN_IF_ERROR(graph->Resolve());
 #else
   // probably nothing required here. validate with model that has nested subgraphs.
@@ -3456,7 +3462,7 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   if (fbs_node_edges != nullptr) {
     for (const auto* fbs_node_edge : *fbs_node_edges) {
       ORT_RETURN_IF_NOT(nullptr != fbs_node_edge, "fbs_node_edge cannot be null");
-      nodes_[fbs_node_edge->node_index()]->LoadEdgesFromOrtFormat(*fbs_node_edge, *this);
+      ORT_RETURN_IF_ERROR(nodes_[fbs_node_edge->node_index()]->LoadEdgesFromOrtFormat(*fbs_node_edge, *this));
     }
   }
 
