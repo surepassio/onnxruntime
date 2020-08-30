@@ -588,13 +588,21 @@ common::Status Model::LoadFromOrtFormat(const fbs::Model& fbs_model,
   auto fbs_op_set_ids = fbs_model.opset_import();
   if (fbs_op_set_ids) {
     for (const auto* entry : *fbs_op_set_ids) {
-      std::string domain_ = entry->domain() ? entry->domain()->str() : "";
-      domain_to_version.emplace(domain_, gsl::narrow_cast<int>(entry->version()));
+      const auto* fb_domain = entry->domain();
+      ORT_RETURN_IF(nullptr == fb_domain, "Invalid serialized model. Null domain in opset import.");
+
+      std::string domain = fb_domain->str();
+
+      if (domain == kOnnxDomainAlias) {
+        domain_to_version[kOnnxDomain] = gsl::narrow_cast<int>(entry->version());
+      } else {
+        domain_to_version[domain] = gsl::narrow_cast<int>(entry->version());
+      }
     }
   }
 
   auto fbs_graph = fbs_model.graph();
-  ORT_RETURN_IF_NOT(nullptr != fbs_graph, "Invalid serialized model. Graph not found.");
+  ORT_RETURN_IF(nullptr == fbs_graph, "Invalid serialized model. Graph not found.");
 
   ORT_RETURN_IF_ERROR(Graph::LoadFromOrtFormat(*fbs_graph, *model, domain_to_version, logger, model->graph_));
 
