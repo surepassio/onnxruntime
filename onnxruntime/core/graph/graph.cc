@@ -571,6 +571,7 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
       [&](const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* fbs_node_arg_names,
           std::vector<NodeArg*>& node_args,
           bool check_parent_graph = false) -> Status {
+    ORT_RETURN_IF(nullptr == fbs_node_arg_names, "fbs_node_arg_names cannot be null");
     node_args.reserve(fbs_node_arg_names->size());
     if (fbs_node_arg_names) {
       for (const auto& node_arg_name : *fbs_node_arg_names) {
@@ -597,7 +598,7 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
   auto fbs_attributes = fbs_node.attributes();
   if (fbs_attributes) {
     for (const auto* fbs_attr : *fbs_attributes) {
-      ORT_RETURN_IF_NOT(nullptr != fbs_attr, "fbs_attr cannot be null");
+      ORT_RETURN_IF(nullptr == fbs_attr, "fbs_attr cannot be null");
       AttributeProto attr_proto;
       std::unique_ptr<Graph> subgraph;
       ORT_RETURN_IF_ERROR(
@@ -633,14 +634,14 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
 
 Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEdge& fbs_node_edges,
                                     const Graph& graph) {
-  ORT_RETURN_IF_NOT(fbs_node_edges.node_index() == index_,
-                    "input index: ", fbs_node_edges.node_index(), " is not the same as this node's index:", index_);
+  ORT_RETURN_IF(fbs_node_edges.node_index() != index_,
+                "input index: ", fbs_node_edges.node_index(), " is not the same as this node's index:", index_);
 
   auto add_edges = [&graph](const flatbuffers::Vector<const onnxruntime::experimental::fbs::EdgeEnd*>* fbs_edges,
                             EdgeSet& edge_set) -> Status {
     if (fbs_edges) {
       for (const auto* fbs_edge : *fbs_edges) {
-        ORT_RETURN_IF_NOT(nullptr != fbs_edge, "fbs_edge cannot be null");
+        ORT_RETURN_IF(nullptr == fbs_edge, "fbs_edge cannot be null");
         edge_set.emplace(*graph.GetNode(fbs_edge->node_index()), fbs_edge->src_arg_index(), fbs_edge->dst_arg_index());
       }
     }
