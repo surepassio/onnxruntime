@@ -8,7 +8,7 @@
 namespace onnxruntime {
 namespace contrib {
 
-static void QLinearLookupTableTransform(const uint8_t* x, const uint8_t table[256], uint8_t* y, size_t n) {
+static void QLinearLookupTableTransform(const uint8_t* x, const uint8_t* table, uint8_t* y, size_t n) {
   for (; n >= 4; n -= 4) {
     const size_t x_value0 = x[0];
     const size_t x_value1 = x[1];
@@ -34,12 +34,12 @@ static void QLinearLookupTableTransform(const uint8_t* x, const uint8_t table[25
 }
 
 template <typename T>
-static void BuildQLinearLeakyReluLookupTable(uint8_t table[256],
-                                             const Tensor* tensor_x_scale,
-                                             const Tensor* tensor_x_zero_point,
-                                             const Tensor* tensor_y_scale,
-                                             const Tensor* tensor_y_zero_point,
-                                             float alpha) {
+static void QlinearBuildLookupTable(uint8_t* table,
+                                    const Tensor* tensor_x_scale,
+                                    const Tensor* tensor_x_zero_point,
+                                    const Tensor* tensor_y_scale,
+                                    const Tensor* tensor_y_zero_point,
+                                    const QLinearLookupBase::ArrayValueTransformer& array_values_transformer) {
   ORT_ENFORCE(IsScalarOr1ElementVector(tensor_x_scale),
               "QLinearLeakyRelu : input X_scale must be a scalar or 1D tensor of size 1");
   ORT_ENFORCE(tensor_x_zero_point == nullptr || IsScalarOr1ElementVector(tensor_x_zero_point),
@@ -48,24 +48,49 @@ static void BuildQLinearLeakyReluLookupTable(uint8_t table[256],
               "QLinearLeakyRelu : input Y_scale must be a scalar or 1D tensor of size 1");
   ORT_ENFORCE(tensor_y_zero_point == nullptr || IsScalarOr1ElementVector(tensor_y_zero_point),
               "QLinearLeakyRelu : input Y_zero_point must be a scalar or 1D tensor of size 1");
+  ORT_ENFORCE(fn, "function must be callable when build lookup table");
 
   const float X_scale = *(tensor_x_scale->Data<float>());
   const T X_zero_point = (tensor_x_zero_point == nullptr) ? static_cast<T>(0) : *(tensor_x_zero_point->template Data<T>());
   const float Y_scale = *(tensor_y_scale->Data<float>());
   const T Y_zero_point = (tensor_y_zero_point == nullptr) ? static_cast<T>(0) : *(tensor_y_zero_point->template Data<T>());
 
-  float dequantized_vector[256];
+  float dequantized_input[256];
+  float dequantized_output[256];
   for (int i = 0; i < 256; ++i) {
     T x = static_cast<T>(i);
     float x_dequantized = X_scale * (static_cast<int>(x) - static_cast<int>(X_zero_point));
-    dequantized_vector[i] = x_dequantized >= 0.0f ? x_dequantized : alpha * x_dequantized;
   }
-  MlasQuantizeLinear(dequantized_vector, (T*)table, 256, Y_scale, Y_zero_point);
+  array_values_transformer(dequantized_input, dequantized_output, 256);
+
+  for (int i = 0; i < 256; ++i) {
+    T x = static_cast<T>(i);
+    float x_dequantized = X_scale * (static_cast<int>(x) - static_cast<int>(X_zero_point));
+    dequantized_output[i] = fn(x_dequantized);  // x_dequantized >= 0.0f ? x_dequantized : alpha * x_dequantized;
+  }
+  MlasQuantizeLinear(dequantized_output, (T*)table, 256, Y_scale, Y_zero_point);
 }
 
 template <typename T>
-QLinearLeakyRelu<T>::QLinearLeakyRelu(const OpKernelInfo& info)
-    : OpKernel(info), alpha_(info.GetAttrOrDefault("alpha", 0.01f)) {
+static void QlinearBuildLookupTable(uint8_t* table,
+                                    const Tensor* tensor_x_scale,
+                                    const Tensor* tensor_x_zero_point,
+                                    const Tensor* tensor_y_scale,
+                                    const Tensor* tensor_y_zero_point,
+                                    const QLinearLookupBase::ScalarValueTransformer& value_transformer) {
+  QLinearLookupBase::ArrayValueTransformer array_values_transformer =
+      [value_transformer](const float* input, float* output, size_t length) {
+        for (size_t i = 0; i < length; ++i) {
+          *output++ = value_transformer(*input++);
+        }
+      };
+  return QlinearBuildLookupTable(table, tensor_x_scale, tensor_x_zero_point,
+                                 tensor_y_scale, tensor_y_zero_point, array_values_transformer);
+}
+
+template <typename T>
+template <typename Transformer>
+QLinearLookupBase<T>::BuildFixedTableIfPossible(Transformer fn) {
   const Tensor* tensor_x_scale = nullptr;
   const Tensor* tensor_x_zero_point = nullptr;
   const Tensor* tensor_y_scale = nullptr;
@@ -75,36 +100,69 @@ QLinearLeakyRelu<T>::QLinearLeakyRelu(const OpKernelInfo& info)
   bool get_x_zero_point = !info.node().InputDefs()[2]->Exists() || info.TryGetConstantInput(2, &tensor_x_zero_point);
   bool get_y_scale = info.TryGetConstantInput(3, &tensor_y_scale);
   bool get_y_zero_point = !info.node().InputDefs()[4]->Exists() || info.TryGetConstantInput(4, &tensor_y_zero_point);
-  is_fixed_parameters_ = get_x_scale && get_x_zero_point && get_y_scale && get_y_zero_point;
+  bool is_fixed_parameters = get_x_scale && get_x_zero_point && get_y_scale && get_y_zero_point;
 
-  if (is_fixed_parameters_) {
-    BuildQLinearLeakyReluLookupTable<T>(
-        fixed_lookup_table_, tensor_x_scale, tensor_x_zero_point,
-        tensor_y_scale, tensor_y_zero_point, alpha_);
+  if (is_fixed_parameters) {
+    fixed_lookup_table_.resize(256);
+    QlinearBuildLookupTable<T>(
+        fixed_lookup_table_.data(), tensor_x_scale, tensor_x_zero_point,
+        tensor_y_scale, tensor_y_zero_point, fn);
   }
 }
 
 template <typename T>
-Status QLinearLeakyRelu<T>::Compute(OpKernelContext* context) const {
+template <typename Transformer>
+Status QLinearLookupBase<T>::ComputeBase(OpKernelContext* context, Transformer fn) const {
   const auto& X = *context->Input<Tensor>(0);
   const auto& input_shape = X.Shape();
   const auto N = input_shape.Size();
   auto& Y = *context->Output(0, input_shape);
 
   uint8_t table[256];
-  if (!is_fixed_parameters_) {
-    BuildQLinearLeakyReluLookupTable<T>(
+  if (fixed_lookup_table_.size() == 0) {
+    BuildQLinearLookupTable<T>(
         table, context->Input<Tensor>(1), context->Input<Tensor>(2),
-        context->Input<Tensor>(3), context->Input<Tensor>(4), alpha_);
+        context->Input<Tensor>(3), context->Input<Tensor>(4), fn);
   }
 
   QLinearLookupTableTransform(
       reinterpret_cast<const uint8_t*>(X.template Data<T>()),
-      is_fixed_parameters_ ? fixed_lookup_table_ : table,
+      is_fixed_parameters_ ? fixed_lookup_table_.data() : table,
       reinterpret_cast<uint8_t*>(Y.template MutableData<T>()),
       static_cast<size_t>(N));
 
   return Status::OK();
+}
+
+// Derived classes from QLinearLookupBase
+template <typename T>
+QLinearLeakyRelu<T>::QLinearLeakyRelu(const OpKernelInfo& info)
+    : QLinearLookupBase(info), alpha_(info.GetAttrOrDefault("alpha", 0.01f)) {
+  BuildFixedTableIfPossible([this](float v) -> float {
+    return v >= 0.0f ? v : alpha_ * v;
+  });
+}
+
+template <typename T>
+Status QLinearLeakyRelu<T>::Compute(OpKernelContext* context) const {
+  return ComputeBase(context, [this](float v) -> float {
+    return v >= 0.0f ? v : alpha_ * v;
+  });
+}
+
+template <typename T>
+QLinearSigmoid<T>::QLinearSigmoid(const OpKernelInfo& info)
+    : QLinearLookupBase(info) {
+  BuildFixedTableIfPossible([](const float* input, float* output, size_t length) {
+    MlasComputeLogistic(input, output, length);
+  });
+}
+
+template <typename T>
+Status QLinearSigmoid<T>::Compute(OpKernelContext* context) const {
+  return ComputeBase(context, [](const float* input, float* output, size_t length) {
+    MlasComputeLogistic(input, output, length);
+  });
 }
 
 #define REGISTER_QLINEAR_LOOKUPTABLE_TYPED_KERNEL(op_name, version, data_type, KERNEL_CLASS) \
@@ -116,6 +174,8 @@ Status QLinearLeakyRelu<T>::Compute(OpKernelContext* context) const {
 
 REGISTER_QLINEAR_LOOKUPTABLE_TYPED_KERNEL(QLinearLeakyRelu, 1, int8_t, QLinearLeakyRelu);
 REGISTER_QLINEAR_LOOKUPTABLE_TYPED_KERNEL(QLinearLeakyRelu, 1, uint8_t, QLinearLeakyRelu);
+REGISTER_QLINEAR_LOOKUPTABLE_TYPED_KERNEL(QLinearSigmoid, 1, int8_t, QLinearSigmoid);
+REGISTER_QLINEAR_LOOKUPTABLE_TYPED_KERNEL(QLinearSigmoid, 1, uint8_t, QLinearSigmoid);
 
 }  // namespace contrib
 }  // namespace onnxruntime
