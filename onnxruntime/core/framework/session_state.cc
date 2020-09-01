@@ -723,20 +723,21 @@ Status SessionState::CreateSubgraphSessionState() {
 Status SessionState::LoadFromOrtFormat(const fbs::SessionState& fbs_session_state,
                                        const KernelRegistryManager& kernel_registry_manager) {
   const auto* fbs_kcis = fbs_session_state.kernels();
-  ORT_RETURN_IF_NOT(nullptr != fbs_kcis, "fbs_kcis cannot be null");
+  ORT_RETURN_IF(nullptr == fbs_kcis, "Kernel create info is null. Invalid ORT format model.");
   auto* node_indices = fbs_kcis->node_indices();
   auto* kernel_def_hashes = fbs_kcis->kernel_def_hashes();
-  ORT_RETURN_IF_NOT(nullptr != node_indices, "node_indices cannot be null");
-  ORT_RETURN_IF_NOT(nullptr != kernel_def_hashes, "kernel_def_hashes cannot be null");
+  ORT_RETURN_IF(nullptr == node_indices, "Kernel create info node indices are null. Invalid ORT format model.");
+  ORT_RETURN_IF(nullptr == kernel_def_hashes, "Kernel create info hashes are null. Invalid ORT format model.");
   ORT_RETURN_IF_NOT(node_indices->size() == kernel_def_hashes->size(),
-                    "node_indices and kernel_def_hashes should have same size");
+                    "Size mismatch for kernel create info node indexes and hashes. Invalid ORT format model.",
+                    node_indices->size(), " != ", kernel_def_hashes->size());
 
   for (flatbuffers::uoffset_t i = 0; i < node_indices->size(); i++) {
     auto node_idx = node_indices->Get(i);
     auto kernal_hash = kernel_def_hashes->Get(i);
 
     const Node* node = graph_.GetNode(node_idx);
-    ORT_RETURN_IF_NOT(node != nullptr, "Can't find node with index ", node_idx, " in graph.");
+    ORT_RETURN_IF(node == nullptr, "Can't find node with index ", node_idx, ". Invalid ORT format model.");
 
     const KernelCreateInfo* kci = nullptr;
     ORT_RETURN_IF_ERROR(kernel_registry_manager.SearchKernelRegistry(*node, kernal_hash, &kci));
@@ -745,7 +746,8 @@ Status SessionState::LoadFromOrtFormat(const fbs::SessionState& fbs_session_stat
 
   if (!subgraph_session_states_.empty()) {
     auto* fbs_sub_graph_session_states = fbs_session_state.sub_graph_session_states();
-    ORT_RETURN_IF_NOT(nullptr != fbs_sub_graph_session_states, "fbs_sub_graph_session_states cannot be null");
+    ORT_RETURN_IF(nullptr == fbs_sub_graph_session_states,
+                  "SessionState for subgraphs is null. Invalid ORT format model.");
 
     for (const auto& pair : subgraph_session_states_) {
       const auto node_idx = pair.first;
@@ -755,12 +757,14 @@ Status SessionState::LoadFromOrtFormat(const fbs::SessionState& fbs_session_stat
         SessionState& subgraph_session_state = *name_to_subgraph_session_state.second;
 
         // Use the graphid as the key to search the for the fbs::SubGraphSessionState
-        const auto key = GetSubGraphId(node_idx, attr_name);
+        std::string key = GetSubGraphId(node_idx, attr_name);
         auto* fbs_sub_graph_ss = fbs_sub_graph_session_states->LookupByKey(key.c_str());
-        ORT_RETURN_IF_NOT(nullptr != fbs_sub_graph_ss, "fbs_sub_graph_ss cannot be found");
+        ORT_RETURN_IF(nullptr == fbs_sub_graph_ss,
+                      "Subgraph SessionState entry for ", key, " is missing. Invalid ORT format model.");
 
         auto* fbs_sub_session_state = fbs_sub_graph_ss->session_state();
-        ORT_RETURN_IF_NOT(nullptr != fbs_sub_session_state, "fbs_sub_session_state cannot be null");
+        ORT_RETURN_IF(nullptr == fbs_sub_session_state,
+                      "Subgraph SessionState for ", key, " is null. Invalid ORT format model.");
         subgraph_session_state.LoadFromOrtFormat(*fbs_sub_session_state, kernel_registry_manager);
       }
     }

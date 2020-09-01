@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "core/framework/tensorprotoutils.h"
+#include "core/graph/graph_flatbuffers_utils.h"
 #include "core/graph/model.h"
 #include "core/graph/model_load_utils.h"
 #include <memory>
@@ -582,62 +583,47 @@ common::Status Model::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
 Model::Model() : model_path_{} {
 }
 
-#if !defined(ORT_MINIMAL_BUILD)
-
-#define SET_MODEL_STR_DATA(SRC, DEST1, DEST2) \
-  if (SRC) {                                  \
-    model->DEST1(SRC->str());                 \
-  }
-
-#else
-
-#define SET_MODEL_STR_DATA(SRC, DEST1, DEST2) \
-  if (SRC) {                                  \
-    model->DEST2 = SRC->str();                \
-  }
-
-#endif
-
 common::Status Model::LoadFromOrtFormat(const fbs::Model& fbs_model,
                                         const logging::Logger& logger,
                                         std::unique_ptr<Model>& model) {
   model.reset(new Model());
 
 #if !defined(ORT_MINIMAL_BUILD)
+  experimental::utils::LoadStringFromOrtFormat(*model->model_proto_.mutable_producer_name(), fbs_model.producer_name());
+  experimental::utils::LoadStringFromOrtFormat(*model->model_proto_.mutable_producer_version(), fbs_model.producer_version());
+  experimental::utils::LoadStringFromOrtFormat(*model->model_proto_.mutable_domain(), fbs_model.domain());
+  experimental::utils::LoadStringFromOrtFormat(*model->model_proto_.mutable_doc_string(), fbs_model.doc_string());
   model->model_proto_.set_model_version(fbs_model.model_version());
   model->model_proto_.set_ir_version(fbs_model.ir_version());
 #else
+  experimental::utils::LoadStringFromOrtFormat(producer_name_, fbs_model.producer_name());
+  experimental::utils::LoadStringFromOrtFormat(producer_version_, fbs_model.producer_version());
+  experimental::utils::LoadStringFromOrtFormat(domain_, fbs_model.domain());
+  experimental::utils::LoadStringFromOrtFormat(doc_string_, fbs_model.doc_string());
   model->model_version_ = fbs_model.model_version();
   model->ir_version_ = fbs_model.ir_version();
 #endif
 
-  // TODO: Can we always serialize a string so the 'if (SRC)' check isn't needed?
-  // Also prefer avoiding the macro and just having a section for full vs. minimal build given we have that
-  // already for model and ir versions.
-  SET_MODEL_STR_DATA(fbs_model.producer_name(), model_proto_.set_producer_name, producer_name_);
-  SET_MODEL_STR_DATA(fbs_model.producer_version(), model_proto_.set_producer_version, producer_version_);
-  SET_MODEL_STR_DATA(fbs_model.domain(), model_proto_.set_domain, domain_);
-  SET_MODEL_STR_DATA(fbs_model.doc_string(), model_proto_.set_doc_string, doc_string_);
-
   std::unordered_map<std::string, int> domain_to_version;
   auto fbs_op_set_ids = fbs_model.opset_import();
-  if (fbs_op_set_ids) {
-    for (const auto* entry : *fbs_op_set_ids) {
-      const auto* fb_domain = entry->domain();
-      ORT_RETURN_IF(nullptr == fb_domain, "Invalid serialized model. Null domain in opset import.");
+  ORT_RETURN_IF(nullptr == fbs_op_set_ids, "Model must have opset imports. Invalid ORT format model.");
 
-      std::string domain = fb_domain->str();
+  for (const auto* entry : *fbs_op_set_ids) {
+    const auto* fbs_domain = entry->domain();
+    ORT_RETURN_IF(nullptr == fbs_domain, "opset import domain is null. Invalid ORT format model.");
 
-      if (domain == kOnnxDomainAlias) {
-        domain_to_version[kOnnxDomain] = gsl::narrow_cast<int>(entry->version());
-      } else {
-        domain_to_version[domain] = gsl::narrow_cast<int>(entry->version());
-      }
+    std::string domain = fbs_domain->str();
+
+    // perform same aliasing that we do when loading an ONNX format model
+    if (domain == kOnnxDomainAlias) {
+      domain_to_version[kOnnxDomain] = gsl::narrow_cast<int>(entry->version());
+    } else {
+      domain_to_version[domain] = gsl::narrow_cast<int>(entry->version());
     }
   }
 
   auto fbs_graph = fbs_model.graph();
-  ORT_RETURN_IF(nullptr == fbs_graph, "Invalid serialized model. Graph not found.");
+  ORT_RETURN_IF(nullptr == fbs_graph, "Graph is null. Invalid ORT format model.");
 
   ORT_RETURN_IF_ERROR(Graph::LoadFromOrtFormat(*fbs_graph, *model, domain_to_version, logger, model->graph_));
 

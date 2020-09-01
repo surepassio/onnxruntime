@@ -221,7 +221,7 @@ Status UnpackTensor(const ONNX_NAMESPACE::TensorProto& tensor, /*out*/ T* p_data
  * @param initializer       given initializer tensor
  * @param unpacked_tensor   the data from the initaizlier in uint8_t* form
  * @param tensor_byte_size  the byte size of the unpacked_tensor
- * @returns Status::OK() if data is unpacked successfully
+ * @returns                 Status::OK() if data is unpacked successfully
  */
 common::Status UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initializer,
                                      std::unique_ptr<uint8_t[]>& unpacked_tensor,

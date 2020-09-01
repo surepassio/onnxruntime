@@ -485,7 +485,8 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
                              flatbuffers::Offset<fbs::Node>& fbs_node) const {
   // if type is Primitive it's an ONNX function and currently we have kernel implementations for all those
   if (func_body_ != nullptr && node_type_ != Type::Primitive) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Serialization of fused function body is not currently supported");
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Serialization of fused function body is not currently supported, ",
+                           "Node [", name_, "] op_type [", op_type_, "]");
   }
 
   auto GetNodeArgsOrtFormat = [&builder](const std::vector<NodeArg*>& src) {
@@ -518,7 +519,7 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
     if (attr_proto.has_g()) {
       const auto it = attr_to_subgraph_map_.find(attr_name);
       ORT_RETURN_IF_NOT(it != attr_to_subgraph_map_.cend(),
-                        "attr_to_subgraph_map_ does not have the graph for key ", attr_name);
+                        "Node [", name_, "] op_type [", op_type_, "] ", "does not have the graph for key ", attr_name);
       graph = it->second;
     }
     ORT_RETURN_IF_ERROR(
@@ -545,7 +546,7 @@ Status Node::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   return Status::OK();
 }
 
-flatbuffers::Offset<fbs::NodeEdge> Node::SaveEdgesOrtFormat(flatbuffers::FlatBufferBuilder& builder) const {
+flatbuffers::Offset<fbs::NodeEdge> Node::SaveEdgesToOrtFormat(flatbuffers::FlatBufferBuilder& builder) const {
   auto get_edges = [](const EdgeSet& edge_set) {
     std::vector<fbs::EdgeEnd> edges;
     edges.reserve(edge_set.size());
@@ -569,38 +570,33 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
   return node->LoadFromOrtFormat(fbs_node, logger);
 }
 
-#define FBS_SET_STR_VAL(VAR, FBS_STR) \
-  if (FBS_STR) {                      \
-    VAR = FBS_STR->str();             \
-  }
-
 Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_node, const logging::Logger& logger) {
-  auto LoadNodeArgsOrtFormat =
+  auto LoadNodeArgsFromOrtFormat =
       [&](const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* fbs_node_arg_names,
           std::vector<NodeArg*>& node_args,
           bool check_parent_graph = false) -> Status {
     ORT_RETURN_IF(nullptr == fbs_node_arg_names, "fbs_node_arg_names cannot be null");
     node_args.reserve(fbs_node_arg_names->size());
-    if (fbs_node_arg_names) {
-      for (const auto& node_arg_name : *fbs_node_arg_names) {
-        ORT_RETURN_IF(nullptr == node_arg_name, "node_arg_name cannot be null");
-        auto* node_arg = check_parent_graph ? graph_->GetNodeArgIncludingParentGraphs(node_arg_name->str())
-                                            : graph_->GetNodeArg(node_arg_name->str());
-        ORT_RETURN_IF(nullptr == node_arg, "Could not find NodeArg ", node_arg_name->str());
-        node_args.push_back(node_arg);
-      }
+    for (const auto& node_arg_name : *fbs_node_arg_names) {
+      ORT_RETURN_IF(nullptr == node_arg_name, "node_arg_name cannot be null");
+      auto* node_arg = check_parent_graph ? graph_->GetNodeArgIncludingParentGraphs(node_arg_name->str())
+                                          : graph_->GetNodeArg(node_arg_name->str());
+      ORT_RETURN_IF(nullptr == node_arg, "LoadNodeArgsFromOrtFormat: Node [", name_, "] op_type [", op_type_,
+                    "], could not find NodeArg ", node_arg_name->str());
+      node_args.push_back(node_arg);
     }
     return Status::OK();
   };
 
-  FBS_SET_STR_VAL(name_, fbs_node.name());
-  FBS_SET_STR_VAL(description_, fbs_node.doc_string());
-  FBS_SET_STR_VAL(domain_, fbs_node.domain());
+  // index_ was set in the ctor of this Node instance
+  experimental::utils::LoadStringFromOrtFormat(name_, fbs_node.name());
+  experimental::utils::LoadStringFromOrtFormat(description_, fbs_node.doc_string());
+  experimental::utils::LoadStringFromOrtFormat(domain_, fbs_node.domain());
   since_version_ = fbs_node.since_version();
-  FBS_SET_STR_VAL(op_type_, fbs_node.op_type());  // index was set in ctor
+  experimental::utils::LoadStringFromOrtFormat(op_type_, fbs_node.op_type());
   node_type_ = static_cast<Node::Type>(fbs_node.type());
-  FBS_SET_STR_VAL(execution_provider_type_, fbs_node.execution_provider_type());
-  ORT_RETURN_IF_ERROR(LoadNodeArgsOrtFormat(fbs_node.inputs(), definitions_.input_defs));
+  experimental::utils::LoadStringFromOrtFormat(execution_provider_type_, fbs_node.execution_provider_type());
+  ORT_RETURN_IF_ERROR(LoadNodeArgsFromOrtFormat(fbs_node.inputs(), definitions_.input_defs));
 
   // attributes
   auto fbs_attributes = fbs_node.attributes();
@@ -624,18 +620,18 @@ Status Node::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Node& fbs_n
     }
   }
 
-  ORT_RETURN_IF_ERROR(LoadNodeArgsOrtFormat(fbs_node.implicit_inputs(), definitions_.implicit_input_defs,
-                                            /* check parent graphs */ true));
+  ORT_RETURN_IF_ERROR(LoadNodeArgsFromOrtFormat(fbs_node.implicit_inputs(), definitions_.implicit_input_defs,
+                                                /* check parent graphs */ true));
 
   {  // input_arg_counts
     auto fbs_input_arg_counts = fbs_node.input_arg_counts();
-    ORT_RETURN_IF(nullptr == fbs_input_arg_counts, "fbs_input_arg_counts cannot be null");
+    ORT_RETURN_IF(nullptr == fbs_input_arg_counts, "Node::LoadFromOrtFormat, input_arg_counts is missing");
     auto& input_arg_count = definitions_.input_arg_count;
     input_arg_count.reserve(fbs_input_arg_counts->size());
     input_arg_count.insert(input_arg_count.begin(), fbs_input_arg_counts->cbegin(), fbs_input_arg_counts->cend());
   }
 
-  ORT_RETURN_IF_ERROR(LoadNodeArgsOrtFormat(fbs_node.outputs(), definitions_.output_defs));
+  ORT_RETURN_IF_ERROR(LoadNodeArgsFromOrtFormat(fbs_node.outputs(), definitions_.output_defs));
 
   return Status::OK();
 }
@@ -646,18 +642,18 @@ Status Node::LoadEdgesFromOrtFormat(const onnxruntime::experimental::fbs::NodeEd
                 "input index: ", fbs_node_edges.node_index(), " is not the same as this node's index:", index_);
 
   auto add_edges = [&graph](const flatbuffers::Vector<const onnxruntime::experimental::fbs::EdgeEnd*>* fbs_edges,
-                            EdgeSet& edge_set) -> Status {
+                            EdgeSet& edge_set, const std::string dst_name) -> Status {
     if (fbs_edges) {
       for (const auto* fbs_edge : *fbs_edges) {
-        ORT_RETURN_IF(nullptr == fbs_edge, "fbs_edge cannot be null");
+        ORT_RETURN_IF(nullptr == fbs_edge, "Node::LoadEdgesFromOrtFormat, edge is missing for ", dst_name);
         edge_set.emplace(*graph.GetNode(fbs_edge->node_index()), fbs_edge->src_arg_index(), fbs_edge->dst_arg_index());
       }
     }
     return Status::OK();
   };
 
-  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.input_edges(), relationships_.input_edges));
-  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.output_edges(), relationships_.output_edges));
+  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.input_edges(), relationships_.input_edges, "input edges"));
+  ORT_RETURN_IF_ERROR(add_edges(fbs_node_edges.output_edges(), relationships_.output_edges, "output edges"));
 
   return Status::OK();
 }
@@ -2716,6 +2712,9 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   auto inputs = GetInputsOutputsOrtFormat(builder, graph_inputs_including_initializers_);
   auto outputs = GetInputsOutputsOrtFormat(builder, graph_outputs_);
 
+  // outer_scope_node_args are required to determine outer scope values to make available when executing a subgraph.
+  // For an ORT_MINIMAL_BUILD there is no Graph::Resolve() to calculate the outer_scope_node_args
+  // so we serialize that information into the ORT format file.
   std::vector<std::string> outer_scope_node_args_vec(resolve_context_.outer_scope_node_args.size());
   std::copy(resolve_context_.outer_scope_node_args.cbegin(),
             resolve_context_.outer_scope_node_args.cend(),
@@ -2750,7 +2749,7 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
       flatbuffers::Offset<fbs::Node> fbs_node;
       ORT_RETURN_IF_ERROR(node->SaveToOrtFormat(builder, fbs_node));
       nodes_vec.push_back(fbs_node);
-      node_edges_vec.push_back(node->SaveEdgesOrtFormat(builder));
+      node_edges_vec.push_back(node->SaveEdgesToOrtFormat(builder));
     }
   }
   auto nodes = builder.CreateVector(nodes_vec);
@@ -3442,12 +3441,22 @@ Graph::Graph(const Model& owning_model,
 }
 
 common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Graph& fbs_graph) {
-  // load initializers
+  // We deserialize the graph from ORT format in the following order:
+  // 1. Deserialize the initializers
+  // 2. Deserialize the NodeArgs
+  //        We need all NodeArg instances to exist when deserializing Nodes to setup the Node's
+  //        inputs/outputs/implicit inputs which are collections of NodeArg*.
+  // 3. Deserialize the Nodes
+  // 4. Deserialize the NodeEdges
+  //        We need all the Node instances to exist as the EdgeEnd has a Node* for the other end of the edge
+  // 5. Deserialize the Inputs/Outputs/outer_scope_node_args
+
+  // Initializers
   auto fbs_initializers = fbs_graph.initializers();
   if (fbs_initializers) {
     name_to_initial_tensor_.reserve(fbs_initializers->size());
     for (const auto* fbs_tensor : *fbs_initializers) {
-      ORT_RETURN_IF_NOT(nullptr != fbs_tensor, "fbs_tensor cannot be null");
+      ORT_RETURN_IF(nullptr == fbs_tensor, "Initializer tensor is missing. Invalid ORT format model.");
       TensorProto* initializer = deserialized_proto_data_.add_initializer();
       ORT_RETURN_IF_ERROR(experimental::utils::LoadInitializerOrtFormat(*fbs_tensor, *initializer));
       name_to_initial_tensor_[initializer->name()] = initializer;
@@ -3459,20 +3468,27 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   if (fbs_node_args) {
     node_args_.reserve(fbs_node_args->size());
     for (const auto* fbs_value_info : *fbs_node_args) {
-      ORT_RETURN_IF_NOT(nullptr != fbs_value_info, "fbs_value_info cannot be null");
+      ORT_RETURN_IF(nullptr == fbs_value_info, "NodeArg is missing. Invalid ORT format model.");
       NodeArgInfo node_arg_info;
       ORT_RETURN_IF_ERROR(experimental::utils::LoadValueInfoOrtFormat(*fbs_value_info, node_arg_info));
-      std::unique_ptr<NodeArg> n(new NodeArg(std::move(node_arg_info)));
-      node_args_[n->Name()] = std::move(n);
+      // NodeArg ctor is private, cannot use make_unique
+      node_args_[node_arg_info.name()] = std::unique_ptr<NodeArg>(new NodeArg(std::move(node_arg_info)));
     }
   }
 
   // Nodes
+  //
+  // Since we access a node using its index, we need to have nodes_ with size max_node_index to avoid
+  // out of bounds access.
   nodes_.resize(fbs_graph.max_node_index());
   auto* fbs_nodes = fbs_graph.nodes();
+
+  // It is possible to have no nodes in the model. Most likely scenario is the subgraph of an If Node 
+  // where the subgraph returns a Constant node. The Constant node will be lifted to an initializer by ORT
+  // (prior to serializing to ORT format), leaving a valid Graph that contains no nodes.
   if (fbs_nodes != nullptr) {
     for (const auto* fbs_node : *fbs_nodes) {
-      ORT_RETURN_IF_NOT(nullptr != fbs_node, "fbs_node cannot be null");
+      ORT_RETURN_IF(nullptr == fbs_node, "Node is missing. Invalid ORT format model.");
       std::unique_ptr<Node> node;
       ORT_RETURN_IF_ERROR(Node::LoadFromOrtFormat(*fbs_node, *this, logger_, node));
       nodes_[node->Index()] = std::move(node);
@@ -3484,17 +3500,18 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   auto* fbs_node_edges = fbs_graph.node_edges();
   if (fbs_node_edges != nullptr) {
     for (const auto* fbs_node_edge : *fbs_node_edges) {
-      ORT_RETURN_IF_NOT(nullptr != fbs_node_edge, "fbs_node_edge cannot be null");
+      ORT_RETURN_IF(nullptr == fbs_node_edge, "NodeEdge is missing. Invalid ORT format model.");
       ORT_RETURN_IF_ERROR(nodes_[fbs_node_edge->node_index()]->LoadEdgesFromOrtFormat(*fbs_node_edge, *this));
     }
   }
 
+  // Inputs/Outputs/outer_scope_node_args
   auto add_node_args = [&](const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* fbs_node_args,
                            std::vector<const NodeArg*>& node_args) -> Status {
     if (fbs_node_args != nullptr) {
       node_args.reserve(fbs_node_args->size());
       for (const auto* fbs_node_arg_name : *fbs_node_args) {
-        ORT_RETURN_IF_NOT(nullptr != fbs_node_arg_name, "fbs_node_arg_name cannot be null");
+        ORT_RETURN_IF(nullptr == fbs_node_arg_name, "NodeArg Name is missing. Invalid ORT format model.");
         gsl::not_null<NodeArg*> node_arg = GetNodeArg(fbs_node_arg_name->str());
         node_args.push_back(node_arg);
       }
@@ -3517,7 +3534,7 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
   if (fbs_outer_scope_node_args != nullptr) {
     resolve_context_.outer_scope_node_args.reserve(fbs_outer_scope_node_args->size());
     for (const auto node_arg_name : *fbs_outer_scope_node_args) {
-      ORT_RETURN_IF_NOT(nullptr != node_arg_name, "node_arg_name cannot be null");
+      ORT_RETURN_IF(nullptr == node_arg_name, "node_arg_name is null. Invalid ORT format model.");
       resolve_context_.outer_scope_node_args.insert(node_arg_name->str());
     }
   }
