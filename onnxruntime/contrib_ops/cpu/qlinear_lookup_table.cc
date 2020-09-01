@@ -39,7 +39,7 @@ static void QlinearBuildLookupTable(uint8_t* table,
                                     const Tensor* tensor_x_zero_point,
                                     const Tensor* tensor_y_scale,
                                     const Tensor* tensor_y_zero_point,
-                                    const QLinearLookupBase::ArrayValueTransformer& array_values_transformer) {
+                                    const LookupTableArrayTransformer& array_values_transformer) {
   ORT_ENFORCE(IsScalarOr1ElementVector(tensor_x_scale),
               "QLinearLeakyRelu : input X_scale must be a scalar or 1D tensor of size 1");
   ORT_ENFORCE(tensor_x_zero_point == nullptr || IsScalarOr1ElementVector(tensor_x_zero_point),
@@ -48,7 +48,6 @@ static void QlinearBuildLookupTable(uint8_t* table,
               "QLinearLeakyRelu : input Y_scale must be a scalar or 1D tensor of size 1");
   ORT_ENFORCE(tensor_y_zero_point == nullptr || IsScalarOr1ElementVector(tensor_y_zero_point),
               "QLinearLeakyRelu : input Y_zero_point must be a scalar or 1D tensor of size 1");
-  ORT_ENFORCE(fn, "function must be callable when build lookup table");
 
   const float X_scale = *(tensor_x_scale->Data<float>());
   const T X_zero_point = (tensor_x_zero_point == nullptr) ? static_cast<T>(0) : *(tensor_x_zero_point->template Data<T>());
@@ -59,15 +58,9 @@ static void QlinearBuildLookupTable(uint8_t* table,
   float dequantized_output[256];
   for (int i = 0; i < 256; ++i) {
     T x = static_cast<T>(i);
-    float x_dequantized = X_scale * (static_cast<int>(x) - static_cast<int>(X_zero_point));
+    dequantized_input[i] = X_scale * (static_cast<int>(x) - static_cast<int>(X_zero_point));
   }
   array_values_transformer(dequantized_input, dequantized_output, 256);
-
-  for (int i = 0; i < 256; ++i) {
-    T x = static_cast<T>(i);
-    float x_dequantized = X_scale * (static_cast<int>(x) - static_cast<int>(X_zero_point));
-    dequantized_output[i] = fn(x_dequantized);  // x_dequantized >= 0.0f ? x_dequantized : alpha * x_dequantized;
-  }
   MlasQuantizeLinear(dequantized_output, (T*)table, 256, Y_scale, Y_zero_point);
 }
 
@@ -77,20 +70,20 @@ static void QlinearBuildLookupTable(uint8_t* table,
                                     const Tensor* tensor_x_zero_point,
                                     const Tensor* tensor_y_scale,
                                     const Tensor* tensor_y_zero_point,
-                                    const QLinearLookupBase::ScalarValueTransformer& value_transformer) {
-  QLinearLookupBase::ArrayValueTransformer array_values_transformer =
+                                    const LookupTableScalarTransformer& value_transformer) {
+  LookupTableArrayTransformer array_values_transformer =
       [value_transformer](const float* input, float* output, size_t length) {
         for (size_t i = 0; i < length; ++i) {
           *output++ = value_transformer(*input++);
         }
       };
-  return QlinearBuildLookupTable(table, tensor_x_scale, tensor_x_zero_point,
-                                 tensor_y_scale, tensor_y_zero_point, array_values_transformer);
+  return QlinearBuildLookupTable<T>(table, tensor_x_scale, tensor_x_zero_point,
+                                    tensor_y_scale, tensor_y_zero_point, array_values_transformer);
 }
 
 template <typename T>
 template <typename Transformer>
-QLinearLookupBase<T>::BuildFixedTableIfPossible(Transformer fn) {
+void QLinearLookupBase<T>::BuildLookupTableIfFixed(const OpKernelInfo& info, Transformer fn) {
   const Tensor* tensor_x_scale = nullptr;
   const Tensor* tensor_x_zero_point = nullptr;
   const Tensor* tensor_y_scale = nullptr;
@@ -120,14 +113,14 @@ Status QLinearLookupBase<T>::ComputeBase(OpKernelContext* context, Transformer f
 
   uint8_t table[256];
   if (fixed_lookup_table_.size() == 0) {
-    BuildQLinearLookupTable<T>(
+    QlinearBuildLookupTable<T>(
         table, context->Input<Tensor>(1), context->Input<Tensor>(2),
         context->Input<Tensor>(3), context->Input<Tensor>(4), fn);
   }
 
   QLinearLookupTableTransform(
       reinterpret_cast<const uint8_t*>(X.template Data<T>()),
-      is_fixed_parameters_ ? fixed_lookup_table_.data() : table,
+      fixed_lookup_table_.size() ? fixed_lookup_table_.data() : table,
       reinterpret_cast<uint8_t*>(Y.template MutableData<T>()),
       static_cast<size_t>(N));
 
@@ -137,30 +130,30 @@ Status QLinearLookupBase<T>::ComputeBase(OpKernelContext* context, Transformer f
 // Derived classes from QLinearLookupBase
 template <typename T>
 QLinearLeakyRelu<T>::QLinearLeakyRelu(const OpKernelInfo& info)
-    : QLinearLookupBase(info), alpha_(info.GetAttrOrDefault("alpha", 0.01f)) {
-  BuildFixedTableIfPossible([this](float v) -> float {
+    : QLinearLookupBase<T>(info), alpha_(info.GetAttrOrDefault("alpha", 0.01f)) {
+  this->BuildLookupTableIfFixed(info, [this](float v) -> float {
     return v >= 0.0f ? v : alpha_ * v;
   });
 }
 
 template <typename T>
 Status QLinearLeakyRelu<T>::Compute(OpKernelContext* context) const {
-  return ComputeBase(context, [this](float v) -> float {
+  return this->ComputeBase(context, [this](float v) -> float {
     return v >= 0.0f ? v : alpha_ * v;
   });
 }
 
 template <typename T>
 QLinearSigmoid<T>::QLinearSigmoid(const OpKernelInfo& info)
-    : QLinearLookupBase(info) {
-  BuildFixedTableIfPossible([](const float* input, float* output, size_t length) {
+    : QLinearLookupBase<T>(info) {
+  this->BuildLookupTableIfFixed(info, [](const float* input, float* output, size_t length) {
     MlasComputeLogistic(input, output, length);
   });
 }
 
 template <typename T>
 Status QLinearSigmoid<T>::Compute(OpKernelContext* context) const {
-  return ComputeBase(context, [](const float* input, float* output, size_t length) {
+  return this->ComputeBase(context, [](const float* input, float* output, size_t length) {
     MlasComputeLogistic(input, output, length);
   });
 }

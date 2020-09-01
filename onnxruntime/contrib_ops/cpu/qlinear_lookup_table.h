@@ -10,6 +10,13 @@
 namespace onnxruntime {
 namespace contrib {
 
+// function that transform array of input value to array of output value of length
+typedef std::function<void(const float* input, float* output, size_t length)> LookupTableArrayTransformer;
+
+// function that transform single value
+typedef std::function<float(float)> LookupTableScalarTransformer;
+
+
 template <typename T>
 class QLinearLookupBase : public OpKernel {
  public:
@@ -17,19 +24,13 @@ class QLinearLookupBase : public OpKernel {
       : OpKernel(info), fixed_lookup_table_() {
   }
 
-  // function that transform array of input value to array of output value of length
-  typedef std::function<void(const float* input, float* input, size_t length)> ArrayValueTransformer;
-
-  // function that transform single value
-  typedef std::function<float(float)> ScalarValueTransformer;
-
- protected:
+//  protected:
   template <typename Transformer>
   Status ComputeBase(OpKernelContext* context, Transformer fn) const;
 
   // Should be called in derived class's constructor
   template <typename Transformer>
-  void BuildFixedTableIfPossible(Transformer fn);
+  void BuildLookupTableIfFixed(const OpKernelInfo& info, Transformer fn);
 
   // when input quantizaton parameters are const, pre-compute table value.
   // After construction, non-zero size means pre-computed. Save space when not pre-computed.
@@ -37,7 +38,7 @@ class QLinearLookupBase : public OpKernel {
 };
 
 template <typename T>
-class QLinearLeakyRelu final : public QLinearLookupBase {
+class QLinearLeakyRelu final : public QLinearLookupBase<T> {
  public:
   QLinearLeakyRelu(const OpKernelInfo& info);
 
@@ -48,7 +49,7 @@ class QLinearLeakyRelu final : public QLinearLookupBase {
 };
 
 template <typename T>
-class QLinearSigmoid final : public QLinearLookupBase {
+class QLinearSigmoid final : public QLinearLookupBase<T> {
  public:
   QLinearSigmoid(const OpKernelInfo& info);
 
