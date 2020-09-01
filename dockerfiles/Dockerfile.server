@@ -31,8 +31,8 @@ RUN mkdir -p /onnxruntime/build && cd /onnxruntime/build && cmake -DCMAKE_BUILD_
 
 FROM minimal AS final
 COPY --from=build /onnxruntime/build/onnxruntime_server /onnxruntime/server/
-COPY --from=build /usr/lib/libonnxruntime.so.1.2.0 /usr/local/lib/libcares.so.2.3.0 /usr/lib/
-RUN ln -s /usr/lib/libonnxruntime.so.1.2.0 /usr/lib/libonnxruntime.so && ln -s /usr/local/lib/libcares.so.2.3.0 /usr/local/lib/libcares.so.2 && ln -s /usr/local/lib/libcares.so.2 /usr/local/lib/libcares.so && ldconfig /usr/local/lib && apt-get update \
+COPY --from=build /usr/lib/libonnxruntime.so.1.4.0 /usr/local/lib/libcares.so.2.3.0 /usr/lib/
+RUN ln -s /usr/lib/libonnxruntime.so.1.4.0 /usr/lib/libonnxruntime.so && ln -s /usr/local/lib/libcares.so.2.3.0 /usr/local/lib/libcares.so.2 && ln -s /usr/local/lib/libcares.so.2 /usr/local/lib/libcares.so && ldconfig /usr/local/lib && apt-get update \
     && apt-get install -y libgomp1 libre2-1v5 libssl1.0.0
 WORKDIR /onnxruntime/server/
 ENTRYPOINT ["/onnxruntime/server/onnxruntime_server"]
