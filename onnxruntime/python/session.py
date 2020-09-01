@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
+import os
 
 from onnxruntime.capi import _pybind_state as C
 
@@ -19,31 +20,11 @@ class Session:
     """
     This is the main class used to run a model.
     """
-    def __init__(self, sess):
-        self._sess = sess
-        self._enable_fallback = True
+    def __init__(self):
 
-    # TODO: Can we remove this? If we separate session creation from model loading/initialization
-    # we shouldn't need any 'reset' functionality as the user can change provider info etc. before model load.
-    def _reset_session(self):
-        "release underlying session object."
-        # meta data references session internal structures
-        # so they must be set to None to decrement _sess reference count.
-        self._inputs_meta = None
-        self._outputs_meta = None
-        self._overridable_initializers = None
-        self._model_meta = None
-        self._providers = None
+        # self._sess is managed by the derived class and relies on bindings from C.InferenceSession
         self._sess = None
-
-        # At this point, _sess object is still referenced by _sess_options,
-        # because of previously _sess_options = _sess.sess_options being executed in _load_model().
-        # Therefore, _sess reference count is not zero and not being released by python gc yet.
-        #
-        # In order to make _sess reference count become 0 and being destroyed by python gc before
-        # creating new session object, we need to reset _sess_options as well.
-        self._sess_options = None
-        self._sess_options = self._sess_options_initial
+        self._enable_fallback = True
 
     def get_session_options(self):
         "Return the session options. See :class:`onnxruntime.SessionOptions`."
@@ -73,9 +54,6 @@ class Session:
         "Return registered execution providers' configurations."
         return self._provider_options
 
-    # TODO: This may not be the best approach vs. simply requiring the providers and options to be specified
-    # at construction time. Otherwise we're keeping memory unnecessarily (path_or_bytes could be bytes) and
-    # causing unexpected side effects (recreating the underlying instance when setting an option)
     def set_providers(self, providers, provider_options=None):
         """
         Register the input list of execution providers. The underlying session is re-created.
@@ -104,8 +82,8 @@ class Session:
                 for key, val in option.items():
                     option[key] = str(val)
 
-        self._reset_session()
-        self._load_model(providers, provider_options)
+        # recreate the underlying C.InferenceSession
+        self._reset_session(providers, provider_options)
 
     def disable_fallback(self):
         """
@@ -198,6 +176,8 @@ class InferenceSession(Session):
         All other filenames are assumed to be ONNX format models.
         """
 
+        Session.__init__(self)
+
         if isinstance(path_or_bytes, str):
             self._model_path = path_or_bytes
             self._model_bytes = None
@@ -210,22 +190,21 @@ class InferenceSession(Session):
         self._sess_options = sess_options
         self._sess_options_initial = sess_options
         self._enable_fallback = True
+        self._read_config_from_model = os.environ.get('ORT_LOAD_CONFIG_FROM_MODEL') == '1'
 
-        sess = C.InferenceSession(self._sess_options if self._sess_options else C.get_default_session_options())
-        Session.__init__(self, sess)
+        self._create_inference_session(providers, provider_options)
 
-        self._load_model(providers, provider_options)
-
-    # TODO: Rethink this setup. If someone wants to create a session, change providers/provider options, and then
-    # load the model we should facilitate that instead of always loading the model in the init and re-creating the
-    # inference session when the providers/provider options change. This setup also means we have to hold a reference
-    # to path_or_bytes forever which is not optimal if that is in-memory bytes.
-    def _load_model(self, providers, provider_options):
+    def _create_inference_session(self, providers, provider_options):
+        session_options = self._sess_options if self._sess_options else C.get_default_session_options()
         if self._model_path:
-            self._sess.load_model(self._model_path, True, providers or [], provider_options or [])
+            sess = C.InferenceSession(session_options, self._model_path, True, self._read_config_from_model)
         else:
-            self._sess.load_model(self._model_bytes, False, providers or [], provider_options or [])
+            sess = C.InferenceSession(session_options, self._model_bytes, False, self._read_config_from_model)
 
+        # initialize the C++ InferenceSession
+        sess.initialize_session(providers or [], provider_options or [])
+
+        self._sess = sess
         self._sess_options = self._sess.session_options
         self._inputs_meta = self._sess.inputs_meta
         self._outputs_meta = self._sess.outputs_meta
@@ -239,6 +218,23 @@ class InferenceSession(Session):
             self._fallback_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         else:
             self._fallback_providers = ['CPUExecutionProvider']
+
+    def _reset_session(self, providers, provider_options):
+        "release underlying session object."
+        # meta data references session internal structures
+        # so they must be set to None to decrement _sess reference count.
+        self._sess_options = None
+        self._inputs_meta = None
+        self._outputs_meta = None
+        self._overridable_initializers = None
+        self._model_meta = None
+        self._providers = None
+        self._provider_options = None
+
+        # create a new C.InferenceSession
+        self._sess = None
+        self._sess_options = self._sess_options_initial
+        self._create_inference_session(providers, provider_options)
 
 
 class IOBinding:

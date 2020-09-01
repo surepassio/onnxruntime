@@ -14,6 +14,7 @@ namespace python {
 using namespace onnxruntime;
 using namespace onnxruntime::logging;
 
+#if !defined(ORT_MINIMAL_BUILD)
 struct CustomOpLibrary {
   CustomOpLibrary(const char* library_path, OrtSessionOptions& ort_so);
 
@@ -27,9 +28,11 @@ struct CustomOpLibrary {
   std::string library_path_;
   void* library_handle_ = nullptr;
 };
+#endif
 
 // Thin wrapper over internal C++ SessionOptions to accommodate custom op library management for the Python user
 struct PySessionOptions : public SessionOptions {
+#if !defined(ORT_MINIMAL_BUILD)
   // `PySessionOptions` has a vector of shared_ptrs to CustomOpLibrary, because so that it can be re-used for all
   // `PyInferenceSession`s using the same `PySessionOptions` and that each `PyInferenceSession` need not construct
   // duplicate CustomOpLibrary instances.
@@ -38,6 +41,7 @@ struct PySessionOptions : public SessionOptions {
   // Hold raw `OrtCustomOpDomain` pointers - it is upto the shared library to release the OrtCustomOpDomains
   // that was created when the library is unloaded
   std::vector<OrtCustomOpDomain*> custom_op_domains_;
+#endif
 };
 
 // Thin wrapper over internal C++ InferenceSession to accommodate custom op library management for the Python user
@@ -49,6 +53,18 @@ struct PyInferenceSession {
     sess_ = onnxruntime::make_unique<InferenceSession>(so, env);
   }
 
+#if !defined(ORT_MINIMAL_BUILD)
+  PyInferenceSession(Environment& env, const PySessionOptions& so, const std::string& arg, bool is_arg_file_name) {
+    if (is_arg_file_name) {
+      // Given arg is the file path. Invoke the corresponding ctor().
+      sess_ = onnxruntime::make_unique<InferenceSession>(so, env, arg);
+    } else {
+      // Given arg is the model content as bytes. Invoke the corresponding ctor().
+      std::istringstream buffer(arg);
+      sess_ = onnxruntime::make_unique<InferenceSession>(so, env, buffer);
+    }
+  }
+
   void AddCustomOpLibraries(const std::vector<std::shared_ptr<CustomOpLibrary>>& custom_op_libraries) {
     if (!custom_op_libraries.empty()) {
       custom_op_libraries_.reserve(custom_op_libraries_.size() + custom_op_libraries.size());
@@ -57,20 +73,20 @@ struct PyInferenceSession {
       }
     }
   }
+#endif
 
-  InferenceSession* GetSessionHandle() const {
-    ORT_ENFORCE(sess_ != nullptr, "PyInferenceSession was not initialized.");
-    return sess_.get();
-  }
+  InferenceSession* GetSessionHandle() const { return sess_.get(); }
 
   virtual ~PyInferenceSession() {}
 
- protected:
+ private:
+#if !defined(ORT_MINIMAL_BUILD)
   // Hold CustomOpLibrary resources so as to tie it to the life cycle of the InferenceSession needing it.
   // NOTE: Declare this above `sess_` so that this is destructed AFTER the InferenceSession instance -
   // this is so that the custom ops held by the InferenceSession gets destroyed prior to the library getting unloaded
   // (if ref count of the shared_ptr reaches 0)
   std::vector<std::shared_ptr<CustomOpLibrary>> custom_op_libraries_;
+#endif
 
   std::unique_ptr<InferenceSession> sess_;
 };

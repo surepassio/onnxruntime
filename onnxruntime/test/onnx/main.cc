@@ -44,7 +44,6 @@ void usage() {
       "\t-d [device_id]: Specifies the device id for multi-device (e.g. GPU). The value should > 0\n"
       "\t-o [optimization level]: Default is 99. Valid values are 0 (disable), 1 (basic), 2 (extended), 99 (all).\n"
       "\t\tPlease see onnxruntime_c_api.h (enum GraphOptimizationLevel) for the full list of all optimization levels. "
-      "\t-O Run ORT format model. Requires .ort file extension"
       "\n"
       "\t-h: help\n"
       "\n"
@@ -108,7 +107,6 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
   int device_id = 0;
   GraphOptimizationLevel graph_optimization_level = ORT_ENABLE_ALL;
   bool user_graph_optimization_level_set = false;
-  bool ort_format_model = false;
 
   OrtLoggingLevel logging_level = ORT_LOGGING_LEVEL_ERROR;
   bool verbose_logging_required = false;
@@ -116,7 +114,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
   bool pause = false;
   {
     int ch;
-    while ((ch = getopt(argc, argv, ORT_TSTR("Ac:hj:Mn:r:e:xvo:d:pO"))) != -1) {
+    while ((ch = getopt(argc, argv, ORT_TSTR("Ac:hj:Mn:r:e:xvo:d:p"))) != -1) {
       switch (ch) {
         case 'A':
           enable_cpu_mem_arena = false;
@@ -223,9 +221,6 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
             usage();
             return -1;
           }
-          break;
-        case 'O':
-          ort_format_model = true;
           break;
         case '?':
         case 'h':

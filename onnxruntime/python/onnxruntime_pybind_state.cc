@@ -195,6 +195,7 @@ namespace py = pybind11;
 using namespace onnxruntime;
 using namespace onnxruntime::logging;
 
+#if !defined(ORT_MINIMAL_BUILD)
 // Custom op section starts
 static Env& platform_env = Env::Default();
 
@@ -249,6 +250,7 @@ void CustomOpLibrary::UnloadLibrary() {
 }
 
 // Custom op section ends
+#endif  // !defined(ORT_MINIMAL_BUILD)
 
 template <typename T>
 void AddNonTensor(const OrtValue& val, std::vector<py::object>& pyobjs, const DataTransferManager* /*data_transfer_manager*/) {
@@ -646,6 +648,7 @@ void GenerateProviderOptionsMap(const std::vector<std::string>& providers,
   }
 }
 
+#if !defined(ORT_MINIMAL_BUILD)
 void RegisterCustomOpDomainsAndLibraries(PyInferenceSession* sess, const PySessionOptions& so) {
   if (!so.custom_op_domains_.empty()) {
     // Register all custom op domains that will be needed for the session
@@ -660,6 +663,7 @@ void RegisterCustomOpDomainsAndLibraries(PyInferenceSession* sess, const PySessi
     sess->AddCustomOpLibraries(so.custom_op_libraries_);
   }
 }
+#endif
 
 void InitializeSession(InferenceSession* sess, const std::vector<std::string>& provider_types) {
   if (provider_types.empty()) {
@@ -1165,6 +1169,7 @@ Applies to session load, initialization, etc. Default is 0.)pbdoc")
           "register_custom_ops_library",
           [](PySessionOptions* options, const std::string& library_path)
               -> void {
+#if !defined(ORT_MINIMAL_BUILD)
             // We need to pass in an `OrtSessionOptions` instance because the exported method in the shared library expects that
             // Once we have access to the `OrtCustomOpDomains` within the passed in `OrtSessionOptions` instance, we place it
             // into the container we are maintaining for that very purpose and the `ortSessionoptions` instance can go out of scope.
@@ -1177,6 +1182,11 @@ Applies to session load, initialization, etc. Default is 0.)pbdoc")
             for (size_t i = 0; i < s.custom_op_domains_.size(); ++i) {
               options->custom_op_domains_.emplace_back(s.custom_op_domains_[i]);
             }
+#else
+            ORT_UNUSED_PARAMETER(options);
+            ORT_UNUSED_PARAMETER(library_path);
+            ORT_THROW("Custom Ops are not supported in this build.");
+#endif
           },
           "Rpbdoc(Specify the path to the shared library containing the custom op kernels required to run a model.)pbdoc");
 
@@ -1271,26 +1281,44 @@ including arg name, arg type (contains both type and shape).)pbdoc")
 
   py::class_<SessionObjectInitializer>(m, "SessionObjectInitializer");
   py::class_<PyInferenceSession>(m, "InferenceSession", R"pbdoc(This is the main class used to run a model.)pbdoc")
-      .def(py::init([&env](const PySessionOptions& so) {
-        auto sess = onnxruntime::make_unique<PyInferenceSession>(env, so);
+      // In Python3, a Python bytes object will be passed to C++ functions that accept std::string or char*
+      // without any conversion. So this load method can be used for model file path (string) and model content (bytes)
+      .def(py::init([&env](const PySessionOptions& so, const std::string arg, bool is_arg_file_name,
+                           bool load_config_from_model = false) {
+        std::unique_ptr<PyInferenceSession> sess;
 
-        RegisterCustomOpDomainsAndLibraries(sess.get(), so);
+        // separate creation of the session from model loading unless we have to read the config from the model.
+        // in a minimal build we only support load via Load(...) and not at session creation time
+        if (load_config_from_model) {
+#if !defined(ORT_MINIMAL_BUILD)
+          sess = onnxruntime::make_unique<PyInferenceSession>(env, so, arg, is_arg_file_name);
+
+          RegisterCustomOpDomainsAndLibraries(sess.get(), so);
+
+          OrtPybindThrowIfError(sess->GetSessionHandle()->Load());
+#else
+          ORT_THROW("Loading configuration from an ONNX model is not supported in this build.");
+#endif
+        } else {
+          sess = onnxruntime::make_unique<PyInferenceSession>(env, so);
+#if !defined(ORT_MINIMAL_BUILD)
+          RegisterCustomOpDomainsAndLibraries(sess.get(), so);
+#endif
+
+          if (is_arg_file_name) {
+            OrtPybindThrowIfError(sess->GetSessionHandle()->Load(arg));
+          } else {
+            OrtPybindThrowIfError(sess->GetSessionHandle()->Load(arg.data(), arg.size()));
+          }
+        }
 
         return sess;
       }))
-      // In Python3, a Python bytes object will be passed to C++ functions that accept std::string or char*
-      // without any conversion. So this load method can be used for model file path (string) and model content (bytes)
       .def(
-          "load_model",
-          [](PyInferenceSession* sess, const std::string arg, bool is_arg_file_name,
-             const std::vector<std::string>& provider_types = {}, const ProviderOptionsVector& provider_options = {}) {
-            // Given arg is the file path. Invoke the corresponding ctor().
-            if (is_arg_file_name) {
-              OrtPybindThrowIfError(sess->GetSessionHandle()->Load(arg));
-            } else {
-              OrtPybindThrowIfError(sess->GetSessionHandle()->Load(arg.data(), arg.size()));
-            }
-
+          "initialize_session",
+          [](PyInferenceSession* sess,
+             const std::vector<std::string>& provider_types = {},
+             const ProviderOptionsVector& provider_options = {}) {
             InitializeSession(sess->GetSessionHandle(), provider_types, provider_options);
           },
           R"pbdoc(Load a model saved in ONNX or ORT format.)pbdoc")

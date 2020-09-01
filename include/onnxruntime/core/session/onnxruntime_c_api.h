@@ -221,11 +221,6 @@ typedef enum GraphOptimizationLevel {
   ORT_ENABLE_ALL = 99
 } GraphOptimizationLevel;
 
-typedef enum SerializationFormat {
-  ONNX = 0,
-  ORT = 1,
-} SerializationFormat;
-
 typedef enum ExecutionMode {
   ORT_SEQUENTIAL = 0,
   ORT_PARALLEL = 1,

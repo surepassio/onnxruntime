@@ -35,7 +35,7 @@ class InferenceSessionGetGraphWrapper : public InferenceSession {
 namespace test {
 
 // Same Tensor from ONNX and ORT format will have different binary representation, need to compare value by value
-void CompareTensors(const OrtValue& left_value, const OrtValue& right_value) {
+static void CompareTensors(const OrtValue& left_value, const OrtValue& right_value) {
   const Tensor& left = left_value.Get<Tensor>();
   const Tensor& right = right_value.Get<Tensor>();
 
@@ -55,7 +55,7 @@ void CompareTensors(const OrtValue& left_value, const OrtValue& right_value) {
   }
 }
 
-void CompareValueInfos(const ValueInfoProto& left, const ValueInfoProto& right) {
+static void CompareValueInfos(const ValueInfoProto& left, const ValueInfoProto& right) {
   ASSERT_EQ(left.name(), right.name());
   ASSERT_EQ(left.doc_string(), right.doc_string());
 
@@ -192,22 +192,15 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
 }
 #endif
 
-// FIXME: Need to save ORT format model and checkin to testdata
-/*
-// test that we can deserialize and run a model
+// test that we can deserialize and run a previously saved ORT format model
 TEST(OrtModelOnlyTests, LoadOrtFormatModel) {
-  const auto output_file = ORT_TSTR("ort_github_issue_4031.onnx.ort");
+  const auto model_filename = ORT_TSTR("ort_github_issue_4031.onnx.ort");
   SessionOptions so;
   so.session_logid = "LoadOrtFormatModel";
-  so.optimized_model_filepath = output_file;
-  so.optimized_model_format = ORT;
 
-  InferenceSessionGetGraphWrapper session_object2{so, GetEnvironment()};
-  ASSERT_STATUS_OK(session_object2.Load(output_file)); // infer type from filename
-  ASSERT_STATUS_OK(session_object2.Initialize());
-
-  const auto& graph2 = session_object2.GetGraph();
-  std::cout << graph2.MaxNodeIndex() << " is max node index\n";
+  InferenceSessionGetGraphWrapper session_object{so, GetEnvironment()};
+  ASSERT_STATUS_OK(session_object.Load(model_filename));  // infer type from filename
+  ASSERT_STATUS_OK(session_object.Initialize());
 
   OrtValue ml_value;
   CreateMLValue<float>(TestCPUExecutionProvider()->GetAllocator(0, OrtMemTypeDefault), {1}, {123.f},
@@ -218,14 +211,13 @@ TEST(OrtModelOnlyTests, LoadOrtFormatModel) {
   // prepare outputs
   std::vector<std::string> output_names{"state_var_out"};
   std::vector<OrtValue> fetches;
-  std::vector<OrtValue> fetches2;
 
-  ASSERT_STATUS_OK(session_object2.Run(feeds, output_names, &fetches2));
+  ASSERT_STATUS_OK(session_object.Run(feeds, output_names, &fetches));
 
-  const auto& output2 = fetches2[0].Get<Tensor>();
-  ASSERT_TRUE(output2.Shape().Size() == 1);
-  ASSERT_TRUE(output2.Data<float>()[0] == 125.f);
+  const auto& output = fetches[0].Get<Tensor>();
+  ASSERT_TRUE(output.Shape().Size() == 1);
+  ASSERT_TRUE(output.Data<float>()[0] == 125.f);
 }
-*/
+
 }  // namespace test
 }  // namespace onnxruntime

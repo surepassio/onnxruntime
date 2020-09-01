@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/flatbuffers/ort_generated.h"
+#include "core/flatbuffers/ort.fbs.h"
 
 #if !defined(ORT_MINIMAL_BUILD)
 //

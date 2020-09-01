@@ -10,7 +10,7 @@ from onnxruntime.capi import _pybind_state as C
 from onnxruntime.capi.session import Session, InferenceSession, IOBinding
 
 
-class TrainingSession(Session):
+class TrainingSession(InferenceSession):
     def __init__(self, path_or_bytes, parameters, sess_options=None):
         if sess_options:
             self._sess = C.TrainingSession(sess_options)
