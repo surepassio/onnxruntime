@@ -222,11 +222,6 @@ Status SaveAttributeOrtFormat(flatbuffers::FlatBufferBuilder& builder,
 #undef GET_FBS_ATTR
 #undef GET_DATA_VEC
 
-#define FBS_SET_STR_VAL(OBJ, FUNC, FBS_STR) \
-  if (FBS_STR) {                            \
-    OBJ.FUNC(FBS_STR->str());               \
-  }
-
 Status LoadInitializerOrtFormat(const fbs::Tensor& fbs_tensor,
                                 TensorProto& initializer) {
   initializer.Clear();
@@ -283,7 +278,6 @@ static Status LoadTensorDimensionOrtFormat(const fbs::Dimension& fbs_dim,
 
 static Status LoadTensorTypeAndShapeOrtFormat(const fbs::TensorTypeAndShape& fbs_tensor_type,
                                               TypeProto_Tensor& tensor_type_proto) {
-  tensor_type_proto.Clear();
   tensor_type_proto.set_elem_type(fbs_tensor_type.elem_type());
   auto fbs_shape = fbs_tensor_type.shape();
   if (fbs_shape) {
