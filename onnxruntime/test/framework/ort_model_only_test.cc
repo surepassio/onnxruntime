@@ -26,27 +26,32 @@ class InferenceSessionGetGraphWrapper : public InferenceSession {
   const Graph& GetGraph() {
     return model_->MainGraph();
   }
+
+  const SessionState& GetSessionState() {
+    return InferenceSession::GetSessionState();
+  }
 };
 
 namespace test {
 
 // Same Tensor from ONNX and ORT format will have different binary representation, need to compare value by value
-void CompareTensors(const TensorProto& left, const TensorProto& right) {
-  ASSERT_EQ(left.name(), right.name());
-  ASSERT_TRUE(std::equal(left.dims().cbegin(), left.dims().cend(), right.dims().cbegin()));
-  ASSERT_EQ(left.data_type(), right.data_type());
-  ASSERT_EQ(left.doc_string(), right.doc_string());
-  if (left.data_type() == TensorProto_DataType_STRING) {
-    ASSERT_TRUE(std::equal(left.string_data().cbegin(), left.string_data().cend(), right.string_data().cbegin()));
+void CompareTensors(const OrtValue& left_value, const OrtValue& right_value) {
+  const Tensor& left = left_value.Get<Tensor>();
+  const Tensor& right = right_value.Get<Tensor>();
+
+  ASSERT_EQ(left.Shape(), right.Shape());
+  ASSERT_EQ(left.GetElementType(), right.GetElementType());
+
+  if (left.IsDataTypeString()) {
+    auto size = left.Shape().Size();
+    const auto* left_strings = left.Data<std::string>();
+    const auto* right_strings = right.Data<std::string>();
+
+    for (int i = 0; i < size; ++i) {
+      EXPECT_EQ(left_strings[i], right_strings[i]) << "Mismatch index:" << i;
+    }
   } else {
-    std::unique_ptr<uint8_t[]> unpacked_tensor_l;
-    std::unique_ptr<uint8_t[]> unpacked_tensor_r;
-    size_t tensor_byte_size_l;
-    size_t tensor_byte_size_r;
-    ASSERT_STATUS_OK(onnxruntime::utils::UnpackInitializerData(left, unpacked_tensor_l, tensor_byte_size_l));
-    ASSERT_STATUS_OK(onnxruntime::utils::UnpackInitializerData(right, unpacked_tensor_r, tensor_byte_size_r));
-    ASSERT_EQ(tensor_byte_size_l, tensor_byte_size_r);
-    ASSERT_EQ(memcmp(unpacked_tensor_l.get(), unpacked_tensor_r.get(), tensor_byte_size_l), 0);
+    ASSERT_EQ(memcmp(left.DataRaw(), right.DataRaw(), left.SizeInBytes()), 0);
   }
 }
 
@@ -126,16 +131,19 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
   const auto& graph = session_object.GetGraph();
   const auto& graph2 = session_object2.GetGraph();
 
-  const auto& i1 = graph.GetAllInitializedTensors();
-  const auto& i2 = graph2.GetAllInitializedTensors();
+  const auto& session_state = session_object.GetSessionState();
+  const auto& session_state2 = session_object2.GetSessionState();
+
+  const auto& i1 = session_state.GetInitializedTensors();
+  const auto& i2 = session_state2.GetInitializedTensors();
   ASSERT_EQ(i1.size(), i2.size());
 
   for (const auto& pair : i1) {
     auto iter = i2.find(pair.first);
     ASSERT_NE(iter, i2.cend());
 
-    const TensorProto& left = *pair.second;
-    const TensorProto& right = *iter->second;
+    const OrtValue& left = pair.second;
+    const OrtValue& right = iter->second;
     CompareTensors(left, right);
   }
 
@@ -148,6 +156,26 @@ TEST(OrtModelOnlyTests, SerializeToOrtFormat) {
     const auto& left_proto = left.ToProto();
     const auto& right_proto = right->ToProto();
     CompareValueInfos(left_proto, right_proto);
+  }
+
+  for (const auto& left : graph.Nodes()) {
+    const auto* right = graph2.GetNode(left.Index());
+    ASSERT_TRUE(right != nullptr);
+    const auto& left_outputs = left.OutputDefs();
+    const auto& right_outputs = right->OutputDefs();
+    ASSERT_EQ(left_outputs.size(), right_outputs.size());
+
+    for (size_t i = 0, end = left_outputs.size(); i < end; ++i) {
+      const auto& left_nodearg = *left_outputs[i];
+      const auto& right_nodearg = *right_outputs[i];
+
+      if (left_nodearg.Exists()) {
+        EXPECT_EQ(left_nodearg.Name(), right_nodearg.Name());
+        CompareValueInfos(left_nodearg.ToProto(), right_nodearg.ToProto());
+      } else {
+        EXPECT_FALSE(right_nodearg.Exists());
+      }
+    }
   }
 
   // check results match
