@@ -1282,7 +1282,7 @@ including arg name, arg type (contains both type and shape).)pbdoc")
   py::class_<SessionObjectInitializer>(m, "SessionObjectInitializer");
   py::class_<PyInferenceSession>(m, "InferenceSession", R"pbdoc(This is the main class used to run a model.)pbdoc")
       // In Python3, a Python bytes object will be passed to C++ functions that accept std::string or char*
-      // without any conversion. So this load method can be used for model file path (string) and model content (bytes)
+      // without any conversion. So this init method can be used for model file path (string) and model content (bytes)
       .def(py::init([&env](const PySessionOptions& so, const std::string arg, bool is_arg_file_name,
                            bool load_config_from_model = false) {
         std::unique_ptr<PyInferenceSession> sess;
