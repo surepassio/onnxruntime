@@ -11,7 +11,7 @@ MAINTAINER Harry Yang "huayang@microsoft.com"
 
 FROM ubuntu:16.04 AS build
 ARG PYTHON_VERSION=3.5
-ARG ONNXRUNTIME_REPO=https://github.com/Microsoft/onnxruntime
+ARG ONNXRUNTIME_REPO=https://github.com/surepassio/onnxruntime
 ARG ONNXRUNTIME_SERVER_BRANCH=master
 ENV DEBIAN_FRONTEND noninteractive
 
